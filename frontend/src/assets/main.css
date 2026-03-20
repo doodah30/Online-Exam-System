@@ -1,0 +1,145 @@
+@import './base.css';
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700;800&display=swap');
+
+#app {
+  width: 100%;
+}
+
+.panel {
+  background: color-mix(in srgb, var(--surface) 92%, #f6fff7 8%);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  box-shadow: var(--shadow-md);
+  padding: clamp(1rem, 2.2vw, 1.5rem);
+}
+
+.card {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 0.8rem 0.95rem;
+  background: var(--soft);
+}
+
+.grid {
+  display: grid;
+  gap: 1rem;
+}
+
+.two-col {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.stack {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.stack-sm {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.stack-lg {
+  display: grid;
+  gap: 1.2rem;
+}
+
+.row-between {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.7rem;
+}
+
+.row-wrap {
+  display: flex;
+  gap: 0.7rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.exam-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+}
+
+h2,
+h3,
+h4 {
+  color: var(--ink);
+}
+
+p {
+  color: var(--ink);
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.tiny {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+input,
+select,
+textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 0.6rem 0.7rem;
+  background: white;
+}
+
+label {
+  display: grid;
+  gap: 0.35rem;
+  font-weight: 600;
+}
+
+button {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 0.58rem 1rem;
+  background: white;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.primary {
+  border-color: transparent;
+  background: linear-gradient(135deg, var(--brand), var(--brand-2));
+  color: white;
+  box-shadow: var(--shadow-sm);
+}
+
+.ghost {
+  background: #ffffff;
+  color: var(--brand-deep);
+}
+
+button:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+@media (max-width: 860px) {
+  .two-col {
+    grid-template-columns: 1fr;
+  }
+
+  .exam-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
