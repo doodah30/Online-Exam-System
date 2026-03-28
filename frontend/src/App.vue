@@ -32,7 +32,11 @@ import { authState, clearAuth } from './stores/auth'
 const router = useRouter()
 const auth = authState
 
-const roleText = computed(() => (auth.user.role === 'teacher' ? '老师' : '学生'))
+const roleText = computed(() => {
+  if (auth.user.role === 'teacher') return '老师'
+  if (auth.user.role === 'admin') return '管理员'
+  return '学生'
+})
 
 const goAuth = () => {
   router.push('/auth')
@@ -42,6 +46,10 @@ const goDashboard = () => {
   if (auth.isAuthenticated) {
     if (auth.user.role === 'teacher') {
       router.push('/teacher')
+      return
+    }
+    if (auth.user.role === 'admin') {
+      router.push('/admin')
       return
     }
     router.push('/dashboard')

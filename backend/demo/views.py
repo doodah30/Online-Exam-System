@@ -15,9 +15,11 @@ from .models import (
     Course,
     CourseEnrollment,
     Exam,
+    OperationLog,
     Question,
     QuestionBankItem,
     Submission,
+    SystemConfig,
     UserProfile,
 )
 
@@ -27,14 +29,23 @@ from .models import (
 # - 课程与选课
 # - 题库维护
 # - 试卷创建、作答、阅卷、统计
+# - 管理员能力（用户管理、日志、考试全局控制、系统配置）
 
 
 @api_view(['GET'])
 def hello_world(request):
+    """健康检查接口。
+
+    用途：快速验证后端服务是否启动成功。
+    """
     return Response({'message': 'Hello from Django!'})
 
 
 def _get_role(user):
+    """读取用户角色。
+
+    角色存储在 UserProfile，而不是 Django 内置 User 表。
+    """
     # 角色信息来自 UserProfile 表，而不是 auth_user 表。
     if not hasattr(user, 'profile'):
         return None
@@ -42,19 +53,52 @@ def _get_role(user):
 
 
 def _require_teacher(user):
+    """判断当前用户是否老师角色。"""
     role = _get_role(user)
     return role == 'teacher'
 
 
+def _require_admin(user):
+    """判断当前用户是否管理员角色。"""
+    role = _get_role(user)
+    return role == 'admin'
+
+
+def _log_operation(request, action, actor=None, target_type='', target_id=None, target_label='', detail=''):
+    """记录系统关键操作日志。"""
+    ip_addr = ''
+    if request is not None:
+        ip_addr = str(request.META.get('HTTP_X_FORWARDED_FOR') or request.META.get('REMOTE_ADDR') or '')[:64]
+
+    OperationLog.objects.create(
+        action=action,
+        actor=actor,
+        target_type=target_type,
+        target_id=target_id,
+        target_label=target_label,
+        detail=str(detail or ''),
+        ip_address=ip_addr,
+    )
+
+
 def _parse_keywords(raw_text):
+    """把关键词字符串标准化为列表（去空格、小写）。"""
     return [item.strip().lower() for item in str(raw_text).split(',') if item.strip()]
 
 
 def _split_tags(raw_tags):
+    """把标签字符串拆成列表，用于筛选与统计。"""
     return [item.strip() for item in str(raw_tags).split(',') if item.strip()]
 
 
 def _grade_subjective(answer_text, keywords, full_score):
+    """主观题关键词打分策略。
+
+    返回值：(score_awarded, is_correct, feedback_text)
+    - score_awarded: 实际给分
+    - is_correct: 是否视为满分正确
+    - feedback_text: 给前端展示的评分说明
+    """
     # 主观题自动阅卷策略：按关键词命中比例分段给分。
     if not answer_text:
         return 0, False, '未作答'
@@ -76,6 +120,7 @@ def _grade_subjective(answer_text, keywords, full_score):
 
 
 def _validate_single_question_payload(item):
+    """校验单选题输入结构并返回标准化字段。"""
     option_list = item.get('options', [])
     if not isinstance(option_list, list) or len(option_list) != 4:
         return None, 'single 题型必须提供 4 个选项'
@@ -105,6 +150,7 @@ def _validate_single_question_payload(item):
 
 
 def _validate_subjective_question_payload(item):
+    """校验主观题输入结构并返回标准化字段。"""
     reference_answer = str(item.get('reference_answer', '')).strip()
     keyword_answers = str(item.get('keyword_answers', '')).strip()
     payload = {
@@ -120,6 +166,10 @@ def _validate_subjective_question_payload(item):
 
 
 def _normalize_question_payload(item):
+    """统一题目入参结构。
+
+    该函数是题库创建、试卷创建的公共入口，保证数据格式一致。
+    """
     # 将前端上传的题目统一标准化，便于同时写入题库/试卷。
     question_type = str(item.get('question_type', 'single')).strip()
     text = str(item.get('text', '')).strip()
@@ -171,6 +221,7 @@ def _normalize_question_payload(item):
 
 
 def _question_to_dict(question, include_answer=False):
+    """把 Question 模型序列化为前端可消费的字典。"""
     payload = {
         'id': question.id,
         'question_type': question.question_type,
@@ -190,6 +241,11 @@ def _question_to_dict(question, include_answer=False):
 
 
 def _exam_to_dict(exam, include_questions=False, include_answer=False, attempted=False):
+    """把试卷对象序列化为接口响应。
+
+    include_questions=True 时返回题目列表。
+    include_answer=True 时返回标准答案字段（仅老师端可用）。
+    """
     has_subjective = exam.questions.filter(question_type='subjective').exists()
     payload = {
         'id': exam.id,
@@ -198,6 +254,7 @@ def _exam_to_dict(exam, include_questions=False, include_answer=False, attempted
         'duration_minutes': exam.duration_minutes,
         'is_published': exam.is_published,
         'result_policy': exam.result_policy,
+        'control_status': exam.control_status,
         'has_subjective': has_subjective,
         'created_by': exam.created_by.username,
         'created_at': exam.created_at,
@@ -222,6 +279,7 @@ def _exam_to_dict(exam, include_questions=False, include_answer=False, attempted
 
 
 def _bank_item_to_dict(item):
+    """把题库题对象序列化为前端字典结构。"""
     return {
         'id': item.id,
         'teacher_id': item.teacher_id,
@@ -242,6 +300,10 @@ def _bank_item_to_dict(item):
 
 @api_view(['POST'])
 def auth_register(request):
+    """注册接口。
+
+    写入 auth_user + demo_userprofile + authtoken_token 三张表。
+    """
     # 注册时会写入两张表：
     # 1) auth_user（用户名、密码哈希）
     # 2) demo_userprofile（角色）
@@ -250,8 +312,10 @@ def auth_register(request):
     password = request.data.get('password', '').strip()
     role = request.data.get('role', '').strip()
 
-    if role not in ('student', 'teacher'):
-        return Response({'error': 'role must be student or teacher'}, status=400)
+    if role not in ('admin', 'student', 'teacher'):
+        return Response({'error': 'role must be admin or student or teacher'}, status=400)
+    if role == 'admin' and UserProfile.objects.filter(role='admin').exists():
+        return Response({'error': 'admin registration is disabled'}, status=403)
     if len(username) < 3:
         return Response({'error': 'username must be at least 3 chars'}, status=400)
     if len(password) < 6:
@@ -275,6 +339,7 @@ def auth_register(request):
 
 @api_view(['POST'])
 def auth_login(request):
+    """登录接口，返回 token 和用户角色。"""
     # 登录成功后返回 token + 用户角色。
     # 前端会把 token 存在浏览器 localStorage，并在每次请求头带上它。
     username = request.data.get('username', '').strip()
@@ -288,6 +353,15 @@ def auth_login(request):
         return Response({'error': 'profile missing, please contact admin'}, status=400)
 
     token, _ = Token.objects.get_or_create(user=user)
+    _log_operation(
+        request,
+        action='user_login',
+        actor=user,
+        target_type='user',
+        target_id=user.id,
+        target_label=user.username,
+        detail='login success',
+    )
     return Response(
         {
             'token': token.key,
@@ -299,6 +373,7 @@ def auth_login(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def auth_me(request):
+    """当前登录用户信息接口。"""
     role = _get_role(request.user)
     if not role:
         return Response({'error': 'profile missing'}, status=400)
@@ -308,6 +383,7 @@ def auth_me(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def students(request):
+    """老师查询学生列表接口，支持 q 模糊搜索。"""
     if not _require_teacher(request.user):
         return Response({'error': 'only teacher can query students'}, status=403)
 
@@ -323,6 +399,10 @@ def students(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def question_bank_meta(request):
+    """题库元数据接口。
+
+    返回科目候选值和热门标签，供前端筛选器初始化。
+    """
     if not _require_teacher(request.user):
         return Response({'error': 'only teacher can view question-bank meta'}, status=403)
 
@@ -347,6 +427,11 @@ def question_bank_meta(request):
 @api_view(['GET', 'POST'])
 @permission_classes([IsAuthenticated])
 def courses(request):
+    """课程接口。
+
+    POST: 老师创建课程
+    GET: 老师看自己课程 / 学生看自己已加入课程
+    """
     # 课程接口：
     # - 老师：创建课程、查看自己课程
     # - 学生：查看自己已加入课程
@@ -411,6 +496,11 @@ def courses(request):
 @api_view(['GET', 'POST'])
 @permission_classes([IsAuthenticated])
 def course_students(request, course_id):
+    """课程学生管理接口。
+
+    GET: 查看课程学生
+    POST: add/remove 学生（支持 usernames 批量）
+    """
     # 课程学生管理：按用户名 add/remove 选课关系。
     if not _require_teacher(request.user):
         return Response({'error': 'only teacher can manage students'}, status=403)
@@ -449,6 +539,7 @@ def course_students(request, course_id):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def course_stats(request, course_id):
+    """课程统计接口，返回按试卷和按学生两个统计维度。"""
     if not _require_teacher(request.user):
         return Response({'error': 'only teacher can view stats'}, status=403)
 
@@ -492,6 +583,7 @@ def course_stats(request, course_id):
 @api_view(['GET', 'POST'])
 @permission_classes([IsAuthenticated])
 def question_bank(request):
+    """题库列表/创建接口。"""
     # 题库接口：
     # - POST 新建题库题
     # - GET 查询当前老师的题库题
@@ -536,6 +628,10 @@ def question_bank(request):
 @api_view(['PUT', 'DELETE'])
 @permission_classes([IsAuthenticated])
 def question_bank_detail(request, item_id):
+    """题库单题编辑/删除接口。
+
+    共享题库可读可用，但只有创建者可改删。
+    """
     if not _require_teacher(request.user):
         return Response({'error': 'only teacher can manage question bank'}, status=403)
 
@@ -562,8 +658,13 @@ def question_bank_detail(request, item_id):
 @api_view(['GET', 'POST'])
 @permission_classes([IsAuthenticated])
 def exams(request):
+    """试卷集合接口。
+
+    POST: 老师创建试卷
+    GET: 老师看自己试卷 / 学生看可参加试卷
+    """
     role = _get_role(request.user)
-    if role not in ('student', 'teacher'):
+    if role not in ('admin', 'student', 'teacher'):
         return Response({'error': 'invalid role'}, status=403)
 
     if request.method == 'POST':
@@ -688,10 +789,24 @@ def exams(request):
                 exam.result_policy = 'teacher_release'
                 exam.save(update_fields=['result_policy'])
 
+            _log_operation(
+                request,
+                action='exam_publish' if exam.is_published else 'exam_create_draft',
+                actor=request.user,
+                target_type='exam',
+                target_id=exam.id,
+                target_label=exam.title,
+                detail=f"question_count={exam.questions.count()} result_policy={exam.result_policy}",
+            )
+
         return Response(_exam_to_dict(exam, include_questions=True, include_answer=True), status=201)
 
     if role == 'teacher':
         queryset = Exam.objects.filter(created_by=request.user).order_by('-created_at')
+        return Response([_exam_to_dict(exam) for exam in queryset])
+
+    if role == 'admin':
+        queryset = Exam.objects.select_related('course', 'created_by').all().order_by('-created_at')
         return Response([_exam_to_dict(exam) for exam in queryset])
 
     queryset = (
@@ -709,6 +824,10 @@ def exams(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def exam_detail(request, exam_id):
+    """试卷详情接口。
+
+    老师可看答案，学生只能看题目（防止泄题）。
+    """
     # 学生查看试卷时：
     # - 不返回客观题正确答案
     # - 若试卷绑定课程，则必须在课程里才能看见
@@ -736,6 +855,12 @@ def exam_detail(request, exam_id):
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def submit_exam(request, exam_id):
+    """交卷接口。
+
+    负责写入 Submission 和 Answer，并根据题型更新状态：
+    - 纯客观题可直接 graded
+    - 含主观题则 submitted，等待老师批阅
+    """
     # 提交试卷后会写入：
     # 1) Submission（一次交卷记录）
     # 2) Answer（每一题的作答与得分）
@@ -744,6 +869,11 @@ def submit_exam(request, exam_id):
         return Response({'error': 'only student can submit'}, status=403)
 
     exam = get_object_or_404(Exam, id=exam_id, is_published=True)
+
+    if exam.control_status == 'paused':
+        return Response({'error': 'exam is paused by admin'}, status=403)
+    if exam.control_status == 'ended':
+        return Response({'error': 'exam has been ended by admin'}, status=403)
 
     if exam.course and not CourseEnrollment.objects.filter(course=exam.course, student=request.user).exists():
         return Response({'error': 'exam not assigned to your courses'}, status=403)
@@ -847,12 +977,26 @@ def submit_exam(request, exam_id):
         payload['total_score'] = total_score
         payload['max_score'] = max_score
 
+    _log_operation(
+        request,
+        action='answer_submit',
+        actor=request.user,
+        target_type='exam',
+        target_id=exam.id,
+        target_label=exam.title,
+        detail=f"submission_id={submission.id}",
+    )
+
     return Response(payload, status=201)
 
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def exam_grading_overview(request, exam_id):
+    """阅卷总览接口。
+
+    返回提交列表 + 未提交学生列表，用于老师批阅首页。
+    """
     if not _require_teacher(request.user):
         return Response({'error': 'only teacher can view grading overview'}, status=403)
 
@@ -897,6 +1041,10 @@ def exam_grading_overview(request, exam_id):
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def grade_submission(request, submission_id):
+    """单份试卷阅卷接口。
+
+    只处理主观题分数，客观题保持自动判分结果。
+    """
     if not _require_teacher(request.user):
         return Response({'error': 'only teacher can grade'}, status=403)
 
@@ -954,6 +1102,10 @@ def grade_submission(request, submission_id):
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def release_exam_results(request, exam_id):
+    """发布成绩接口。
+
+    仅发布已 graded 且尚未发布的提交。
+    """
     if not _require_teacher(request.user):
         return Response({'error': 'only teacher can release results'}, status=403)
 
@@ -973,6 +1125,12 @@ def release_exam_results(request, exam_id):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def exam_submissions(request, exam_id):
+    """试卷提交详情接口（老师端）。
+
+    返回每份提交的题目作答明细：
+    - 单选题：学生选项 + 标准选项
+    - 主观题：学生答案 + 标准答案
+    """
     if not _require_teacher(request.user):
         return Response({'error': 'only teacher can view submissions'}, status=403)
 
@@ -1014,9 +1172,356 @@ def exam_submissions(request, exam_id):
     return Response({'exam': {'id': exam.id, 'title': exam.title}, 'submissions': records})
 
 
+@api_view(['GET', 'POST'])
+@permission_classes([IsAuthenticated])
+def admin_users(request):
+    """管理员用户管理：查询、创建用户。"""
+    if not _require_admin(request.user):
+        return Response({'error': 'only admin can manage users'}, status=403)
+
+    if request.method == 'POST':
+        username = str(request.data.get('username', '')).strip()
+        password = str(request.data.get('password', '')).strip()
+        role = str(request.data.get('role', '')).strip()
+        is_active = bool(request.data.get('is_active', True))
+
+        if role not in ('admin', 'teacher', 'student'):
+            return Response({'error': 'role must be admin/teacher/student'}, status=400)
+        if len(username) < 3:
+            return Response({'error': 'username must be at least 3 chars'}, status=400)
+        if len(password) < 6:
+            return Response({'error': 'password must be at least 6 chars'}, status=400)
+        if User.objects.filter(username=username).exists():
+            return Response({'error': 'username already exists'}, status=400)
+
+        with transaction.atomic():
+            user = User.objects.create_user(username=username, password=password, is_active=is_active)
+            UserProfile.objects.create(user=user, role=role)
+            Token.objects.get_or_create(user=user)
+
+        _log_operation(
+            request,
+            action='admin_create_user',
+            actor=request.user,
+            target_type='user',
+            target_id=user.id,
+            target_label=user.username,
+            detail=f"role={role} is_active={is_active}",
+        )
+
+        return Response(
+            {
+                'id': user.id,
+                'username': user.username,
+                'role': role,
+                'is_active': user.is_active,
+            },
+            status=201,
+        )
+
+    q = str(request.query_params.get('q', '')).strip()
+    role = str(request.query_params.get('role', '')).strip()
+    queryset = User.objects.select_related('profile').all().order_by('id')
+    if q:
+        queryset = queryset.filter(username__icontains=q)
+    if role in ('admin', 'teacher', 'student'):
+        queryset = queryset.filter(profile__role=role)
+
+    data = [
+        {
+            'id': user.id,
+            'username': user.username,
+            'role': user.profile.role if hasattr(user, 'profile') else '',
+            'is_active': user.is_active,
+            'is_superuser': user.is_superuser,
+            'date_joined': user.date_joined,
+        }
+        for user in queryset[:200]
+    ]
+    return Response(data)
+
+
+@api_view(['PUT', 'DELETE'])
+@permission_classes([IsAuthenticated])
+def admin_user_detail(request, user_id):
+    """管理员用户管理：编辑、删除（可用于禁用账号）。"""
+    if not _require_admin(request.user):
+        return Response({'error': 'only admin can manage users'}, status=403)
+
+    user = get_object_or_404(User, id=user_id)
+
+    if user.id == request.user.id:
+        return Response({'error': 'admin cannot operate on own account'}, status=400)
+
+    if request.method == 'DELETE':
+        username = user.username
+        user.delete()
+        _log_operation(
+            request,
+            action='admin_delete_user',
+            actor=request.user,
+            target_type='user',
+            target_id=user_id,
+            target_label=username,
+        )
+        return Response({'ok': True})
+
+    username = request.data.get('username')
+    role = request.data.get('role')
+    is_active = request.data.get('is_active')
+
+    if username is not None:
+        username = str(username).strip()
+        if len(username) < 3:
+            return Response({'error': 'username must be at least 3 chars'}, status=400)
+        if User.objects.exclude(id=user.id).filter(username=username).exists():
+            return Response({'error': 'username already exists'}, status=400)
+        user.username = username
+
+    if is_active is not None:
+        user.is_active = bool(is_active)
+
+    if role is not None:
+        role = str(role).strip()
+        if role not in ('admin', 'teacher', 'student'):
+            return Response({'error': 'role must be admin/teacher/student'}, status=400)
+        profile, _ = UserProfile.objects.get_or_create(user=user)
+        profile.role = role
+        profile.save(update_fields=['role'])
+
+    user.save()
+
+    _log_operation(
+        request,
+        action='admin_update_user',
+        actor=request.user,
+        target_type='user',
+        target_id=user.id,
+        target_label=user.username,
+        detail=f"role={user.profile.role if hasattr(user, 'profile') else ''} is_active={user.is_active}",
+    )
+
+    return Response(
+        {
+            'id': user.id,
+            'username': user.username,
+            'role': user.profile.role if hasattr(user, 'profile') else '',
+            'is_active': user.is_active,
+        }
+    )
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def admin_reset_user_password(request, user_id):
+    """管理员重置指定用户密码。"""
+    if not _require_admin(request.user):
+        return Response({'error': 'only admin can reset password'}, status=403)
+
+    user = get_object_or_404(User, id=user_id)
+    if user.id == request.user.id:
+        return Response({'error': 'admin cannot operate on own account'}, status=400)
+    new_password = str(request.data.get('new_password', '')).strip()
+    if len(new_password) < 6:
+        return Response({'error': 'new_password must be at least 6 chars'}, status=400)
+
+    user.set_password(new_password)
+    user.save(update_fields=['password'])
+    Token.objects.filter(user=user).delete()
+    Token.objects.get_or_create(user=user)
+
+    _log_operation(
+        request,
+        action='admin_reset_password',
+        actor=request.user,
+        target_type='user',
+        target_id=user.id,
+        target_label=user.username,
+    )
+    return Response({'ok': True})
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def admin_change_own_password(request):
+    """管理员修改自己的密码（独立页面使用）。"""
+    if not _require_admin(request.user):
+        return Response({'error': 'only admin can change own password here'}, status=403)
+
+    old_password = str(request.data.get('old_password', '')).strip()
+    new_password = str(request.data.get('new_password', '')).strip()
+
+    if len(new_password) < 6:
+        return Response({'error': 'new_password must be at least 6 chars'}, status=400)
+    if old_password == new_password:
+        return Response({'error': 'new password must be different from old password'}, status=400)
+    if not request.user.check_password(old_password):
+        return Response({'error': 'old_password is incorrect'}, status=400)
+
+    request.user.set_password(new_password)
+    request.user.save(update_fields=['password'])
+
+    Token.objects.filter(user=request.user).delete()
+    token, _ = Token.objects.get_or_create(user=request.user)
+
+    _log_operation(
+        request,
+        action='admin_change_own_password',
+        actor=request.user,
+        target_type='user',
+        target_id=request.user.id,
+        target_label=request.user.username,
+    )
+
+    return Response(
+        {
+            'token': token.key,
+            'user': {
+                'id': request.user.id,
+                'username': request.user.username,
+                'role': request.user.profile.role if hasattr(request.user, 'profile') else 'admin',
+            },
+        }
+    )
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def admin_operation_logs(request):
+    """管理员查看系统关键操作日志。"""
+    if not _require_admin(request.user):
+        return Response({'error': 'only admin can view logs'}, status=403)
+
+    action = str(request.query_params.get('action', '')).strip()
+    q = str(request.query_params.get('q', '')).strip()
+    limit_raw = request.query_params.get('limit', 100)
+    try:
+        limit = max(1, min(int(limit_raw), 500))
+    except (TypeError, ValueError):
+        limit = 100
+
+    queryset = OperationLog.objects.select_related('actor').all().order_by('-created_at')
+    if action:
+        queryset = queryset.filter(action__icontains=action)
+    if q:
+        queryset = queryset.filter(Q(target_label__icontains=q) | Q(detail__icontains=q) | Q(actor__username__icontains=q))
+
+    return Response(
+        [
+            {
+                'id': item.id,
+                'action': item.action,
+                'actor_id': item.actor_id,
+                'actor_username': item.actor.username if item.actor else '',
+                'target_type': item.target_type,
+                'target_id': item.target_id,
+                'target_label': item.target_label,
+                'detail': item.detail,
+                'ip_address': item.ip_address,
+                'created_at': item.created_at,
+            }
+            for item in queryset[:limit]
+        ]
+    )
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def admin_control_exam(request, exam_id):
+    """管理员全局控制考试状态：pause/resume/end。"""
+    if not _require_admin(request.user):
+        return Response({'error': 'only admin can control exams'}, status=403)
+
+    exam = get_object_or_404(Exam, id=exam_id)
+    action = str(request.data.get('action', '')).strip().lower()
+    mapping = {
+        'pause': 'paused',
+        'resume': 'running',
+        'end': 'ended',
+    }
+    if action not in mapping:
+        return Response({'error': 'action must be pause/resume/end'}, status=400)
+
+    exam.control_status = mapping[action]
+    exam.save(update_fields=['control_status'])
+
+    _log_operation(
+        request,
+        action='admin_control_exam',
+        actor=request.user,
+        target_type='exam',
+        target_id=exam.id,
+        target_label=exam.title,
+        detail=f"control_status={exam.control_status}",
+    )
+
+    return Response({'exam_id': exam.id, 'title': exam.title, 'control_status': exam.control_status})
+
+
+@api_view(['GET', 'PUT'])
+@permission_classes([IsAuthenticated])
+def admin_system_config(request):
+    """管理员查看/更新系统基础运行配置。"""
+    if not _require_admin(request.user):
+        return Response({'error': 'only admin can update system config'}, status=403)
+
+    config = SystemConfig.objects.first()
+    if not config:
+        config = SystemConfig.objects.create(updated_by=request.user)
+
+    if request.method == 'PUT':
+        auto_save_interval_seconds = request.data.get('auto_save_interval_seconds')
+        max_exam_concurrency = request.data.get('max_exam_concurrency')
+
+        if auto_save_interval_seconds is not None:
+            try:
+                auto_save_interval_seconds = int(auto_save_interval_seconds)
+            except (TypeError, ValueError):
+                return Response({'error': 'auto_save_interval_seconds must be an integer'}, status=400)
+            if auto_save_interval_seconds < 5:
+                return Response({'error': 'auto_save_interval_seconds must be >= 5'}, status=400)
+            config.auto_save_interval_seconds = auto_save_interval_seconds
+
+        if max_exam_concurrency is not None:
+            try:
+                max_exam_concurrency = int(max_exam_concurrency)
+            except (TypeError, ValueError):
+                return Response({'error': 'max_exam_concurrency must be an integer'}, status=400)
+            if max_exam_concurrency < 1:
+                return Response({'error': 'max_exam_concurrency must be >= 1'}, status=400)
+            config.max_exam_concurrency = max_exam_concurrency
+
+        config.updated_by = request.user
+        config.save()
+
+        _log_operation(
+            request,
+            action='admin_update_system_config',
+            actor=request.user,
+            target_type='system_config',
+            target_id=config.id,
+            target_label='SystemConfig',
+            detail=(
+                f"auto_save_interval_seconds={config.auto_save_interval_seconds} "
+                f"max_exam_concurrency={config.max_exam_concurrency}"
+            ),
+        )
+
+    return Response(
+        {
+            'id': config.id,
+            'auto_save_interval_seconds': config.auto_save_interval_seconds,
+            'max_exam_concurrency': config.max_exam_concurrency,
+            'updated_by': config.updated_by.username if config.updated_by else '',
+            'updated_at': config.updated_at,
+        }
+    )
+
+
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def my_submissions(request):
+    """学生查看自己的提交与成绩接口。"""
     if _get_role(request.user) != 'student':
         return Response({'error': 'only student can view own submissions'}, status=403)
 

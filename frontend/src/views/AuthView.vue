@@ -10,6 +10,7 @@
         <li>支持客观题自动阅卷并实时返回成绩</li>
         <li>支持老师查看每场考试提交记录</li>
       </ul>
+      <p class="tiny muted">管理员账号不开放公开注册，由系统初始化或由现有管理员创建。</p>
     </article>
 
     <article class="panel form-panel">
@@ -26,7 +27,18 @@
 
         <label>
           密码
-          <input v-model="form.password" type="password" placeholder="请输入密码" required />
+          <div class="password-field">
+            <input
+              v-model="form.password"
+              class="password-input"
+              :type="showPassword ? 'text' : 'password'"
+              placeholder="请输入密码"
+              required
+            />
+            <button class="toggle-btn" type="button" @click="showPassword = !showPassword">
+              {{ showPassword ? '隐藏' : '显示' }}
+            </button>
+          </div>
         </label>
 
         <label v-if="mode === 'register'">
@@ -57,6 +69,7 @@ const router = useRouter()
 const mode = ref('login')
 const loading = ref(false)
 const error = ref('')
+const showPassword = ref(false)
 
 const form = reactive({
   username: '',
@@ -88,6 +101,8 @@ const submit = async () => {
     setAuth(response.data)
     if (response.data.user.role === 'teacher') {
       router.push('/teacher')
+    } else if (response.data.user.role === 'admin') {
+      router.push('/admin')
     } else {
       router.push('/dashboard')
     }
@@ -157,5 +172,31 @@ const submit = async () => {
 .error {
   color: var(--danger);
   font-weight: 600;
+}
+
+.password-field {
+  position: relative;
+}
+
+.password-input {
+  padding-right: 4.2rem;
+}
+
+.toggle-btn {
+  position: absolute;
+  right: 0.4rem;
+  top: 50%;
+  transform: translateY(-50%);
+  border: none;
+  background: transparent;
+  color: var(--brand-deep);
+  padding: 0.2rem 0.35rem;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.password-input::-ms-reveal,
+.password-input::-ms-clear {
+  display: none;
 }
 </style>

@@ -34,3 +34,5 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+
+CODE_STUDY_GUIDE.md

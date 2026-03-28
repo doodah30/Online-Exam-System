@@ -9,9 +9,10 @@ from django.contrib.auth.models import User
 
 
 class UserProfile(models.Model):
-	"""扩展用户信息，仅负责保存角色（student/teacher）。"""
+	"""扩展用户信息，仅负责保存角色（admin/teacher/student）。"""
 
 	ROLE_CHOICES = (
+		('admin', 'Admin'),
 		('student', 'Student'),
 		('teacher', 'Teacher'),
 	)
@@ -31,11 +32,18 @@ class Exam(models.Model):
 		('auto_release', 'Auto Release'),
 	)
 
+	CONTROL_STATUS_CHOICES = (
+		('running', 'Running'),
+		('paused', 'Paused'),
+		('ended', 'Ended'),
+	)
+
 	title = models.CharField(max_length=200)
 	description = models.TextField(blank=True)
 	duration_minutes = models.PositiveIntegerField(default=60)
 	is_published = models.BooleanField(default=True)
 	result_policy = models.CharField(max_length=20, choices=RESULT_POLICY_CHOICES, default='teacher_release')
+	control_status = models.CharField(max_length=20, choices=CONTROL_STATUS_CHOICES, default='running')
 	course = models.ForeignKey('Course', on_delete=models.SET_NULL, related_name='exams', null=True, blank=True)
 	created_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='created_exams')
 	created_at = models.DateTimeField(auto_now_add=True)
@@ -160,3 +168,32 @@ class QuestionBankItem(models.Model):
 
 	def __str__(self):
 		return f"BankItem {self.id} - {self.teacher.username}"
+
+
+class OperationLog(models.Model):
+	"""系统关键操作日志，用于审计追踪。"""
+
+	action = models.CharField(max_length=100)
+	actor = models.ForeignKey(User, on_delete=models.SET_NULL, related_name='operation_logs', null=True, blank=True)
+	target_type = models.CharField(max_length=50, blank=True)
+	target_id = models.IntegerField(null=True, blank=True)
+	target_label = models.CharField(max_length=200, blank=True)
+	detail = models.TextField(blank=True)
+	ip_address = models.CharField(max_length=64, blank=True)
+	created_at = models.DateTimeField(auto_now_add=True)
+
+	def __str__(self):
+		actor_name = self.actor.username if self.actor else 'anonymous'
+		return f"{self.action} by {actor_name}"
+
+
+class SystemConfig(models.Model):
+	"""系统运行配置（单例）。"""
+
+	auto_save_interval_seconds = models.PositiveIntegerField(default=30)
+	max_exam_concurrency = models.PositiveIntegerField(default=200)
+	updated_by = models.ForeignKey(User, on_delete=models.SET_NULL, related_name='updated_system_configs', null=True, blank=True)
+	updated_at = models.DateTimeField(auto_now=True)
+
+	def __str__(self):
+		return "SystemConfig"

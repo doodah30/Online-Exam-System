@@ -4,6 +4,12 @@ import AuthView from '../views/AuthView.vue'
 import DashboardView from '../views/DashboardView.vue'
 import StudentExamsView from '../views/StudentExamsView.vue'
 import StudentScoresView from '../views/StudentScoresView.vue'
+import AdminHomeView from '../views/AdminHomeView.vue'
+import AdminUsersView from '../views/AdminUsersView.vue'
+import AdminLogsView from '../views/AdminLogsView.vue'
+import AdminExamControlView from '../views/AdminExamControlView.vue'
+import AdminSystemConfigView from '../views/AdminSystemConfigView.vue'
+import AdminChangePasswordView from '../views/AdminChangePasswordView.vue'
 import TeacherHomeView from '../views/TeacherHomeView.vue'
 import CourseManagementView from '../views/CourseManagementView.vue'
 import ExamManagementView from '../views/ExamManagementView.vue'
@@ -45,6 +51,42 @@ const router = createRouter({
       name: 'student-scores',
       component: StudentScoresView,
       meta: { requiresAuth: true, role: 'student' },
+    },
+    {
+      path: '/admin',
+      name: 'admin-home',
+      component: AdminHomeView,
+      meta: { requiresAuth: true, role: 'admin' },
+    },
+    {
+      path: '/admin/users',
+      name: 'admin-users',
+      component: AdminUsersView,
+      meta: { requiresAuth: true, role: 'admin' },
+    },
+    {
+      path: '/admin/logs',
+      name: 'admin-logs',
+      component: AdminLogsView,
+      meta: { requiresAuth: true, role: 'admin' },
+    },
+    {
+      path: '/admin/exams',
+      name: 'admin-exams',
+      component: AdminExamControlView,
+      meta: { requiresAuth: true, role: 'admin' },
+    },
+    {
+      path: '/admin/system-config',
+      name: 'admin-system-config',
+      component: AdminSystemConfigView,
+      meta: { requiresAuth: true, role: 'admin' },
+    },
+    {
+      path: '/admin/change-password',
+      name: 'admin-change-password',
+      component: AdminChangePasswordView,
+      meta: { requiresAuth: true, role: 'admin' },
     },
     {
       path: '/teacher',
@@ -109,12 +151,16 @@ router.beforeEach((to) => {
 
   // 规则 2：已登录用户不再进入登录页。
   if (to.path === '/auth' && authState.isAuthenticated) {
+    if (authState.user.role === 'teacher') return '/teacher'
+    if (authState.user.role === 'admin') return '/admin'
     return '/dashboard'
   }
 
   // 规则 3：角色不匹配（例如学生访问老师页）-> 回到仪表盘。
   if (to.meta.role && authState.user.role !== to.meta.role) {
-    return authState.user.role === 'teacher' ? '/teacher' : '/dashboard'
+    if (authState.user.role === 'teacher') return '/teacher'
+    if (authState.user.role === 'admin') return '/admin'
+    return '/dashboard'
   }
 
   return true

@@ -79,6 +79,8 @@ WSGI_APPLICATION = 'myapi.wsgi.application'
 
 DATABASES = {
     'default': {
+        # 当前项目使用 SQLite，数据库文件就是 backend/db.sqlite3。
+        # 优点是开箱即用、方便教学与本地开发；生产环境通常换成 MySQL/PostgreSQL。
         'ENGINE': 'django.db.backends.sqlite3',
         'NAME': BASE_DIR / 'db.sqlite3',
     }
@@ -124,9 +126,11 @@ STATIC_URL = 'static/'
 CORS_ALLOW_ALL_ORIGINS = True
 
 REST_FRAMEWORK = {
+    # 每次请求通过 Authorization: Token xxx 进行身份识别。
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'rest_framework.authentication.TokenAuthentication',
     ],
+    # 先放宽到 AllowAny，具体接口再通过装饰器控制权限。
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.AllowAny',
     ],
