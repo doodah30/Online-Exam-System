@@ -13,6 +13,7 @@
         <button v-if="!auth.isAuthenticated" class="ghost" @click="goAuth">登录 / 注册</button>
         <div v-else class="user-box">
           <span>{{ auth.user.username }} · {{ roleText }}</span>
+          <button class="ghost" @click="goBindEmail">绑定邮箱</button>
           <button class="danger" @click="logout">退出登录</button>
         </div>
       </nav>
@@ -56,6 +57,10 @@ const goDashboard = () => {
     return
   }
   router.push('/')
+}
+
+const goBindEmail = () => {
+  router.push('/account/email')
 }
 
 const logout = () => {

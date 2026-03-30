@@ -18,6 +18,7 @@ import ExamDetailView from '../views/ExamDetailView.vue'
 import ExamSubmissionsView from '../views/ExamSubmissionsView.vue'
 import QuestionBankView from '../views/QuestionBankView.vue'
 import CourseStatsView from '../views/CourseStatsView.vue'
+import EmailBindingView from '../views/EmailBindingView.vue'
 import { authState } from '../stores/auth'
 
 // 路由定义：根据角色区分老师与学生可访问页面。
@@ -135,6 +136,12 @@ const router = createRouter({
       name: 'course-stats',
       component: CourseStatsView,
       meta: { requiresAuth: true, role: 'teacher' },
+    },
+    {
+      path: '/account/email',
+      name: 'account-email',
+      component: EmailBindingView,
+      meta: { requiresAuth: true },
     },
     {
       path: '/:pathMatch(.*)*',

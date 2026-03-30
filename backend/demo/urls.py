@@ -10,7 +10,11 @@ from .views import (
     admin_users,
     auth_login,
     auth_me,
+    auth_bind_email_with_code,
+    auth_reset_password_with_code,
     auth_register,
+    auth_send_bind_email_code,
+    auth_send_password_reset_code,
     course_stats,
     course_students,
     courses,
@@ -37,6 +41,10 @@ urlpatterns = [
     path('auth/register/', auth_register),
     path('auth/login/', auth_login),
     path('auth/me/', auth_me),
+    path('auth/password-reset/send-code/', auth_send_password_reset_code),
+    path('auth/password-reset/confirm/', auth_reset_password_with_code),
+    path('auth/email/send-bind-code/', auth_send_bind_email_code),
+    path('auth/email/bind/', auth_bind_email_with_code),
 
     # 学生查询与课程
     path('students/', students),

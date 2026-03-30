@@ -49,10 +49,45 @@
           </select>
         </label>
 
+        <label v-if="mode === 'register'">
+          邮箱（选填，建议用于找回密码）
+          <input v-model.trim="form.email" type="email" placeholder="例如：name@example.com" />
+        </label>
+
         <button class="primary" :disabled="loading">{{ loading ? '处理中...' : modeText }}</button>
       </form>
 
       <p v-if="error" class="error">{{ error }}</p>
+
+      <article class="forgot-panel stack">
+        <button class="link-btn" type="button" @click="showForgot = !showForgot">
+          {{ showForgot ? '收起忘记密码' : '忘记密码？用邮箱验证码找回' }}
+        </button>
+
+        <form v-if="showForgot" class="stack" @submit.prevent="resetPasswordByCode">
+          <label>
+            用户名
+            <input v-model.trim="forgotForm.username" type="text" placeholder="请输入账号用户名" required />
+          </label>
+
+          <div class="inline-row">
+            <label class="grow">
+              验证码
+              <input v-model.trim="forgotForm.code" type="text" maxlength="6" placeholder="6位验证码" required />
+            </label>
+            <button class="ghost" type="button" @click="sendResetCode" :disabled="forgotLoading">
+              {{ forgotLoading ? '发送中...' : '发送验证码' }}
+            </button>
+          </div>
+
+          <label>
+            新密码
+            <input v-model="forgotForm.newPassword" type="password" placeholder="至少6位" required />
+          </label>
+
+          <button class="primary" :disabled="forgotLoading">{{ forgotLoading ? '处理中...' : '重置并登录' }}</button>
+        </form>
+      </article>
     </article>
   </section>
 </template>
@@ -70,11 +105,20 @@ const mode = ref('login')
 const loading = ref(false)
 const error = ref('')
 const showPassword = ref(false)
+const showForgot = ref(false)
+const forgotLoading = ref(false)
 
 const form = reactive({
   username: '',
   password: '',
   role: 'student',
+  email: '',
+})
+
+const forgotForm = reactive({
+  username: '',
+  code: '',
+  newPassword: '',
 })
 
 const modeText = computed(() => (mode.value === 'login' ? '登录' : '注册并登录'))
@@ -90,6 +134,7 @@ const submit = async () => {
         username: form.username,
         password: form.password,
         role: form.role,
+        email: form.email,
       })
     } else {
       response = await api.post('/auth/login/', {
@@ -110,6 +155,45 @@ const submit = async () => {
     error.value = err?.response?.data?.error || '请求失败，请确认后端已启动'
   } finally {
     loading.value = false
+  }
+}
+
+const sendResetCode = async () => {
+  error.value = ''
+  forgotLoading.value = true
+  try {
+    const resp = await api.post('/auth/password-reset/send-code/', {
+      username: forgotForm.username,
+    })
+    error.value = resp?.data?.message || '验证码已发送，请查收邮箱'
+  } catch (err) {
+    error.value = err?.response?.data?.error || '发送验证码失败'
+  } finally {
+    forgotLoading.value = false
+  }
+}
+
+const resetPasswordByCode = async () => {
+  error.value = ''
+  forgotLoading.value = true
+  try {
+    const response = await api.post('/auth/password-reset/confirm/', {
+      username: forgotForm.username,
+      code: forgotForm.code,
+      new_password: forgotForm.newPassword,
+    })
+    setAuth(response.data)
+    if (response.data.user.role === 'teacher') {
+      router.push('/teacher')
+    } else if (response.data.user.role === 'admin') {
+      router.push('/admin')
+    } else {
+      router.push('/dashboard')
+    }
+  } catch (err) {
+    error.value = err?.response?.data?.error || '重置失败，请检查验证码'
+  } finally {
+    forgotLoading.value = false
   }
 }
 </script>
@@ -172,6 +256,31 @@ const submit = async () => {
 .error {
   color: var(--danger);
   font-weight: 600;
+}
+
+.forgot-panel {
+  border-top: 1px dashed var(--line);
+  padding-top: 0.8rem;
+}
+
+.link-btn {
+  border: none;
+  background: transparent;
+  text-align: left;
+  color: var(--brand-deep);
+  font-weight: 700;
+  padding: 0;
+  cursor: pointer;
+}
+
+.inline-row {
+  display: flex;
+  gap: 0.6rem;
+  align-items: end;
+}
+
+.grow {
+  flex: 1;
 }
 
 .password-field {

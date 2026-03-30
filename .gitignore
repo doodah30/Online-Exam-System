@@ -34,5 +34,10 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+backend/start-local-email.cmd
 
 CODE_STUDY_GUIDE.md
+1.md
+2.md
+3.md
+4.md

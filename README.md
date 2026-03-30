@@ -44,6 +44,23 @@ python manage.py runserver
 
 后端默认地址：`http://127.0.0.1:8000`
 
+如需启用邮箱验证码（找回密码 / 绑定邮箱），请先配置 SMTP 环境变量：
+
+```bash
+# Windows PowerShell 示例（126邮箱）
+$env:EMAIL_HOST="smtp.126.com"
+$env:EMAIL_PORT="465"
+$env:EMAIL_USE_SSL="true"
+$env:EMAIL_USE_TLS="false"
+$env:EMAIL_HOST_USER="你的发件邮箱"
+$env:EMAIL_HOST_PASSWORD="你的SMTP授权码"
+$env:DEFAULT_FROM_EMAIL="你的发件邮箱"
+```
+
+说明：
+- 126 邮箱常用 `SSL + 465`。
+- 若你的邮箱服务商要求 `TLS + 587`，改为 `EMAIL_USE_SSL=false`、`EMAIL_USE_TLS=true` 即可。
+
 ### 3) 启动前端
 
 新开一个终端：
@@ -80,6 +97,10 @@ npm run build
 - `POST /api/auth/register/`
 - `POST /api/auth/login/`
 - `GET /api/auth/me/`
+- `POST /api/auth/password-reset/send-code/`
+- `POST /api/auth/password-reset/confirm/`
+- `POST /api/auth/email/send-bind-code/`
+- `POST /api/auth/email/bind/`
 - `GET|POST /api/exams/`
 - `GET /api/exams/{id}/`
 - `POST /api/exams/{id}/submit/`

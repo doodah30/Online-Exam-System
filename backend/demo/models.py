@@ -197,3 +197,30 @@ class SystemConfig(models.Model):
 
 	def __str__(self):
 		return "SystemConfig"
+
+
+class EmailVerificationCode(models.Model):
+	"""邮箱验证码：用于找回密码和绑定邮箱。"""
+
+	PURPOSE_CHOICES = (
+		('reset_password', 'Reset Password'),
+		('bind_email', 'Bind Email'),
+	)
+
+	user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='email_codes', null=True, blank=True)
+	username_snapshot = models.CharField(max_length=150, blank=True)
+	email = models.EmailField()
+	purpose = models.CharField(max_length=30, choices=PURPOSE_CHOICES)
+	code = models.CharField(max_length=6)
+	expires_at = models.DateTimeField()
+	used_at = models.DateTimeField(null=True, blank=True)
+	created_at = models.DateTimeField(auto_now_add=True)
+
+	class Meta:
+		indexes = [
+			models.Index(fields=['email', 'purpose', '-created_at']),
+			models.Index(fields=['username_snapshot', 'purpose', '-created_at']),
+		]
+
+	def __str__(self):
+		return f"{self.email} ({self.purpose})"

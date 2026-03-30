@@ -14,6 +14,7 @@ export const authState = reactive({
         id: null,
         username: '',
         role: '',
+        email: '',
       },
   isAuthenticated: Boolean(storedToken),
 })
@@ -21,7 +22,12 @@ export const authState = reactive({
 export function setAuth(payload) {
   // 登录/注册成功后更新内存状态 + 本地缓存。
   authState.token = payload.token
-  authState.user = payload.user
+  authState.user = {
+    id: payload?.user?.id ?? null,
+    username: payload?.user?.username ?? '',
+    role: payload?.user?.role ?? '',
+    email: payload?.user?.email ?? '',
+  }
   authState.isAuthenticated = true
 
   localStorage.setItem('exam_token', payload.token)
@@ -35,6 +41,7 @@ export function clearAuth() {
     id: null,
     username: '',
     role: '',
+    email: '',
   }
   authState.isAuthenticated = false
 

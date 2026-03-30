@@ -1,8 +1,12 @@
+import random
+from datetime import timedelta
 from django.contrib.auth import authenticate
 from django.contrib.auth.models import User
+from django.core.mail import send_mail
 from django.db import transaction
 from django.db.models import Avg, Q
 from django.shortcuts import get_object_or_404
+from django.conf import settings
 from django.utils import timezone
 from collections import Counter
 from rest_framework.authtoken.models import Token
@@ -14,6 +18,7 @@ from .models import (
     Answer,
     Course,
     CourseEnrollment,
+    EmailVerificationCode,
     Exam,
     OperationLog,
     Question,
@@ -89,6 +94,55 @@ def _parse_keywords(raw_text):
 def _split_tags(raw_tags):
     """把标签字符串拆成列表，用于筛选与统计。"""
     return [item.strip() for item in str(raw_tags).split(',') if item.strip()]
+
+
+def _is_valid_email(email):
+    email = str(email or '').strip()
+    return '@' in email and '.' in email.split('@')[-1]
+
+
+def _generate_email_code():
+    return f"{random.randint(0, 999999):06d}"
+
+
+def _is_email_send_too_frequent(*, user=None, username='', email='', purpose=''):
+    recent_time = timezone.now() - timedelta(seconds=60)
+    queryset = EmailVerificationCode.objects.filter(purpose=purpose, created_at__gte=recent_time)
+    if user is not None:
+        queryset = queryset.filter(user=user)
+    elif username:
+        queryset = queryset.filter(username_snapshot=username)
+    elif email:
+        queryset = queryset.filter(email=email)
+    return queryset.exists()
+
+
+def _send_email_code(*, email, code, purpose):
+    subject_map = {
+        'reset_password': '在线考试系统 - 找回密码验证码',
+        'bind_email': '在线考试系统 - 绑定邮箱验证码',
+    }
+    action_map = {
+        'reset_password': '找回密码',
+        'bind_email': '绑定邮箱',
+    }
+    expires_minutes = 10
+    subject = subject_map.get(purpose, '在线考试系统验证码')
+    action_text = action_map.get(purpose, '身份校验')
+    body = (
+        f"您好，\n\n"
+        f"您正在进行{action_text}操作。\n"
+        f"验证码：{code}\n"
+        f"有效期：{expires_minutes}分钟\n"
+        f"若非本人操作，请忽略本邮件。\n"
+    )
+    send_mail(
+        subject,
+        body,
+        settings.DEFAULT_FROM_EMAIL,
+        [email],
+        fail_silently=False,
+    )
 
 
 def _grade_subjective(answer_text, keywords, full_score):
@@ -311,6 +365,7 @@ def auth_register(request):
     username = request.data.get('username', '').strip()
     password = request.data.get('password', '').strip()
     role = request.data.get('role', '').strip()
+    email = str(request.data.get('email', '')).strip().lower()
 
     if role not in ('admin', 'student', 'teacher'):
         return Response({'error': 'role must be admin or student or teacher'}, status=400)
@@ -322,16 +377,21 @@ def auth_register(request):
         return Response({'error': 'password must be at least 6 chars'}, status=400)
     if User.objects.filter(username=username).exists():
         return Response({'error': 'username already exists'}, status=400)
+    if email:
+        if not _is_valid_email(email):
+            return Response({'error': 'email format is invalid'}, status=400)
+        if User.objects.filter(email__iexact=email).exists():
+            return Response({'error': 'email already used by another account'}, status=400)
 
     with transaction.atomic():
-        user = User.objects.create_user(username=username, password=password)
+        user = User.objects.create_user(username=username, password=password, email=email)
         UserProfile.objects.create(user=user, role=role)
         token, _ = Token.objects.get_or_create(user=user)
 
     return Response(
         {
             'token': token.key,
-            'user': {'id': user.id, 'username': user.username, 'role': role},
+            'user': {'id': user.id, 'username': user.username, 'role': role, 'email': user.email or ''},
         },
         status=201,
     )
@@ -365,7 +425,12 @@ def auth_login(request):
     return Response(
         {
             'token': token.key,
-            'user': {'id': user.id, 'username': user.username, 'role': user.profile.role},
+            'user': {
+                'id': user.id,
+                'username': user.username,
+                'role': user.profile.role,
+                'email': user.email or '',
+            },
         }
     )
 
@@ -377,7 +442,189 @@ def auth_me(request):
     role = _get_role(request.user)
     if not role:
         return Response({'error': 'profile missing'}, status=400)
-    return Response({'id': request.user.id, 'username': request.user.username, 'role': role})
+    return Response({'id': request.user.id, 'username': request.user.username, 'role': role, 'email': request.user.email or ''})
+
+
+@api_view(['POST'])
+def auth_send_password_reset_code(request):
+    """发送找回密码验证码到绑定邮箱。"""
+    username = str(request.data.get('username', '')).strip()
+    if not username:
+        return Response({'error': 'username is required'}, status=400)
+
+    user = User.objects.filter(username=username).first()
+    if not user or not user.email:
+        # 降低账号枚举风险：统一提示
+        return Response({'message': '如果账号已绑定邮箱，验证码将发送到该邮箱'})
+
+    if _is_email_send_too_frequent(user=user, purpose='reset_password'):
+        return Response({'error': 'please wait before requesting another code'}, status=429)
+
+    code = _generate_email_code()
+    expires_at = timezone.now() + timedelta(minutes=10)
+    EmailVerificationCode.objects.create(
+        user=user,
+        username_snapshot=user.username,
+        email=user.email,
+        purpose='reset_password',
+        code=code,
+        expires_at=expires_at,
+    )
+
+    try:
+        _send_email_code(email=user.email, code=code, purpose='reset_password')
+    except Exception:
+        return Response({'error': 'failed to send email, check smtp settings'}, status=500)
+
+    return Response({'message': '验证码已发送，请查收邮箱'})
+
+
+@api_view(['POST'])
+def auth_reset_password_with_code(request):
+    """通过邮箱验证码重置密码。"""
+    username = str(request.data.get('username', '')).strip()
+    code = str(request.data.get('code', '')).strip()
+    new_password = str(request.data.get('new_password', '')).strip()
+
+    if not username:
+        return Response({'error': 'username is required'}, status=400)
+    if len(code) != 6 or not code.isdigit():
+        return Response({'error': 'code must be 6 digits'}, status=400)
+    if len(new_password) < 6:
+        return Response({'error': 'new_password must be at least 6 chars'}, status=400)
+
+    user = User.objects.filter(username=username).first()
+    if not user:
+        return Response({'error': 'invalid code or expired'}, status=400)
+
+    verify_record = (
+        EmailVerificationCode.objects.filter(
+            user=user,
+            username_snapshot=user.username,
+            purpose='reset_password',
+            code=code,
+            used_at__isnull=True,
+            expires_at__gte=timezone.now(),
+        )
+        .order_by('-created_at')
+        .first()
+    )
+    if not verify_record:
+        return Response({'error': 'invalid code or expired'}, status=400)
+
+    with transaction.atomic():
+        user.set_password(new_password)
+        user.save(update_fields=['password'])
+        verify_record.used_at = timezone.now()
+        verify_record.save(update_fields=['used_at'])
+        Token.objects.filter(user=user).delete()
+        token, _ = Token.objects.get_or_create(user=user)
+
+    _log_operation(
+        request,
+        action='password_reset_by_email_code',
+        actor=user,
+        target_type='user',
+        target_id=user.id,
+        target_label=user.username,
+    )
+
+    return Response(
+        {
+            'token': token.key,
+            'user': {
+                'id': user.id,
+                'username': user.username,
+                'role': user.profile.role if hasattr(user, 'profile') else '',
+                'email': user.email or '',
+            },
+        }
+    )
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def auth_send_bind_email_code(request):
+    """发送绑定邮箱验证码（登录后操作）。"""
+    email = str(request.data.get('email', '')).strip().lower()
+    if not _is_valid_email(email):
+        return Response({'error': 'email format is invalid'}, status=400)
+    if User.objects.exclude(id=request.user.id).filter(email__iexact=email).exists():
+        return Response({'error': 'email already used by another account'}, status=400)
+    if _is_email_send_too_frequent(user=request.user, purpose='bind_email'):
+        return Response({'error': 'please wait before requesting another code'}, status=429)
+
+    code = _generate_email_code()
+    expires_at = timezone.now() + timedelta(minutes=10)
+    EmailVerificationCode.objects.create(
+        user=request.user,
+        username_snapshot=request.user.username,
+        email=email,
+        purpose='bind_email',
+        code=code,
+        expires_at=expires_at,
+    )
+
+    try:
+        _send_email_code(email=email, code=code, purpose='bind_email')
+    except Exception:
+        return Response({'error': 'failed to send email, check smtp settings'}, status=500)
+
+    return Response({'message': '验证码已发送，请查收邮箱'})
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def auth_bind_email_with_code(request):
+    """确认验证码并绑定邮箱。"""
+    email = str(request.data.get('email', '')).strip().lower()
+    code = str(request.data.get('code', '')).strip()
+
+    if not _is_valid_email(email):
+        return Response({'error': 'email format is invalid'}, status=400)
+    if len(code) != 6 or not code.isdigit():
+        return Response({'error': 'code must be 6 digits'}, status=400)
+    if User.objects.exclude(id=request.user.id).filter(email__iexact=email).exists():
+        return Response({'error': 'email already used by another account'}, status=400)
+
+    verify_record = (
+        EmailVerificationCode.objects.filter(
+            user=request.user,
+            username_snapshot=request.user.username,
+            email=email,
+            purpose='bind_email',
+            code=code,
+            used_at__isnull=True,
+            expires_at__gte=timezone.now(),
+        )
+        .order_by('-created_at')
+        .first()
+    )
+    if not verify_record:
+        return Response({'error': 'invalid code or expired'}, status=400)
+
+    with transaction.atomic():
+        request.user.email = email
+        request.user.save(update_fields=['email'])
+        verify_record.used_at = timezone.now()
+        verify_record.save(update_fields=['used_at'])
+
+    _log_operation(
+        request,
+        action='bind_email',
+        actor=request.user,
+        target_type='user',
+        target_id=request.user.id,
+        target_label=request.user.username,
+        detail=f"email={email}",
+    )
+
+    return Response(
+        {
+            'message': '邮箱绑定成功',
+            'email': request.user.email,
+        }
+    )
 
 
 @api_view(['GET'])
