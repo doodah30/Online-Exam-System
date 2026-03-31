@@ -40,7 +40,6 @@
               <option value="single">单选题</option>
               <option value="multiple">多选题</option>
               <option value="judge">判断题</option>
-              <option value="blank">填空题</option>
               <option value="short">简答题</option>
             </select>
           </label>
@@ -56,9 +55,14 @@
         </label>
 
         <template v-if="form.question_type === 'single' || form.question_type === 'multiple'">
+          <div class="row-wrap">
+            <button class="ghost" type="button" @click="addOption">新增选项</button>
+            <button class="ghost" type="button" :disabled="form.options.length <= 2" @click="removeOption">删除最后一个选项</button>
+          </div>
+
           <div class="grid two-col">
             <label v-for="(opt, idx) in form.options" :key="idx">
-              选项 {{ String.fromCharCode(65 + idx) }}
+              选项 {{ optionLabel(idx) }}
               <input v-model.trim="form.options[idx]" required />
             </label>
           </div>
@@ -66,18 +70,17 @@
           <label v-if="form.question_type === 'single'">
             正确选项
             <select v-model.number="form.correct_option">
-              <option :value="0">A</option>
-              <option :value="1">B</option>
-              <option :value="2">C</option>
-              <option :value="3">D</option>
+              <option v-for="(_, idx) in form.options" :key="`single-opt-${idx}`" :value="idx">
+                {{ optionLabel(idx) }}
+              </option>
             </select>
           </label>
 
           <div v-else class="stack-sm">
             <p class="tiny">正确选项（可多选）</p>
-            <label v-for="opt in [0, 1, 2, 3]" :key="`co-${opt}`" class="tiny checkbox-line">
-              <input type="checkbox" :value="opt" v-model="form.correct_options" />
-              {{ String.fromCharCode(65 + opt) }}
+            <label v-for="(_, idx) in form.options" :key="`co-${idx}`" class="tiny checkbox-line">
+              <input type="checkbox" :value="idx" v-model="form.correct_options" />
+              {{ optionLabel(idx) }}
             </label>
           </div>
         </template>
@@ -96,10 +99,6 @@
           <label>
             参考答案
             <textarea v-model.trim="form.reference_answer" rows="2"></textarea>
-          </label>
-          <label>
-            关键词（逗号分隔）
-            <input v-model.trim="form.keyword_answers" placeholder="例如：封装,继承,多态" />
           </label>
         </template>
 
@@ -136,70 +135,78 @@
     </article>
 
     <article v-else class="panel stack">
-      <h3>题目检索</h3>
-      <div class="grid two-col">
-        <label>
-          关键字
-          <input v-model.trim="filters.q" placeholder="搜索题干" />
-        </label>
-        <label>
-          科目标签
-          <select v-model="filters.subject_tag">
-            <option value="">全部</option>
+      <div class="toolbar">
+        <h3>题库列表</h3>
+        <div class="toolbar-controls">
+          <input class="mini-input" v-model.trim="filters.q" placeholder="搜索题干" @keyup.enter="loadItems" />
+          <select class="mini-select" v-model="filters.subject_tag">
+            <option value="">全部科目</option>
             <option v-for="subject in subjectOptions" :key="`f-${subject}`" :value="subject">{{ subject }}</option>
           </select>
-        </label>
-      </div>
-
-      <div class="grid two-col">
-        <label>
-          普通标签
-          <input v-model.trim="filters.tag" placeholder="例如：高频" />
-        </label>
-        <label>
-          难度
-          <select v-model="filters.difficulty">
-            <option value="">全部</option>
-            <option v-for="n in 5" :key="n" :value="n">{{ n }}</option>
+          <select class="mini-select" v-model="filters.question_type">
+            <option value="">全部题型</option>
+            <option value="single">单选</option>
+            <option value="multiple">多选</option>
+            <option value="judge">判断</option>
+            <option value="short">简答</option>
           </select>
-        </label>
-      </div>
-
-      <div class="grid two-col">
-        <label>
-          题型
-          <select v-model="filters.question_type">
-            <option value="">全部</option>
-            <option value="single">单选题</option>
-            <option value="subjective">主观题</option>
-          </select>
-        </label>
-        <div class="row-wrap actions">
           <button class="ghost" @click="loadItems">搜索</button>
           <button class="ghost" @click="resetFilters">重置</button>
+          <button class="primary" @click="mode = 'create'">新增题目</button>
         </div>
       </div>
-    </article>
 
-    <article class="panel stack">
-      <h3>题库列表</h3>
-      <p v-if="loading" class="muted">加载中...</p>
-      <p v-else-if="items.length === 0" class="muted">暂无题目</p>
+      <SkeletonBlock v-if="loading" :rows="4" />
 
-      <div v-else class="stack-sm">
-        <div v-for="(item, index) in items" :key="item.id" class="card stack-sm">
-          <div class="row-between">
-            <h4>序号 {{ index + 1 }} · {{ item.question_type === 'single' ? '单选题' : '主观题' }}</h4>
-            <div class="row-wrap">
-              <span class="tiny">创建者：{{ item.teacher_username }}</span>
-              <button class="ghost" :disabled="item.teacher_id !== auth.user.id" @click="startEdit(item)">编辑</button>
-              <button class="ghost danger-lite" :disabled="item.teacher_id !== auth.user.id" @click="removeItem(item.id)">删除</button>
-            </div>
-          </div>
-          <p>{{ item.text }}</p>
-          <p class="tiny">科目：{{ item.subject_tag }} · 标签：{{ item.tags || '无' }} · 难度：{{ item.difficulty }} · 分值：{{ item.score }}</p>
-        </div>
+      <EmptyState
+        v-else-if="items.length === 0"
+        title="题库还是空的"
+        description="先创建一道题目，后续组卷和筛选才会更高效。"
+        action-text="立即创建"
+        @action="mode = 'create'"
+      />
+
+      <div v-else class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>序号</th>
+              <th>题干</th>
+              <th>题型</th>
+              <th>科目/标签</th>
+              <th>难度</th>
+              <th>分值</th>
+              <th>归属</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(item, index) in items" :key="item.id">
+              <td>{{ index + 1 }}</td>
+              <td>{{ item.text }}</td>
+              <td>{{ questionTypeText(item.question_type) }}</td>
+              <td>
+                <div>{{ item.subject_tag }}</div>
+                <div class="tiny">{{ item.tags || '无标签' }}</div>
+              </td>
+              <td>{{ item.difficulty }}</td>
+              <td>{{ item.score }}</td>
+              <td>
+                <span class="pill" :class="item.teacher_id === auth.user.id ? 'pill-success' : 'pill-draft'">
+                  {{ item.teacher_id === auth.user.id ? '我创建的' : '共享题' }}
+                </span>
+              </td>
+              <td>
+                <div class="row-wrap">
+                  <button class="ghost tiny-btn" :disabled="item.teacher_id !== auth.user.id" @click="startEdit(item)">编辑</button>
+                  <button class="ghost danger-lite tiny-btn" :disabled="item.teacher_id !== auth.user.id" @click="removeItem(item.id)">删除</button>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
       </div>
+
       <p v-if="error" class="error">{{ error }}</p>
     </article>
   </section>
@@ -209,6 +216,8 @@
 import { onMounted, reactive, ref } from 'vue'
 
 import BackButton from '../components/BackButton.vue'
+import EmptyState from '../components/EmptyState.vue'
+import SkeletonBlock from '../components/SkeletonBlock.vue'
 import { api } from '../api'
 import { authState } from '../stores/auth'
 
@@ -234,7 +243,6 @@ const makeForm = () => ({
   correct_option: 0,
   correct_options: [0],
   reference_answer: '',
-  keyword_answers: '',
 })
 
 const form = reactive(makeForm())
@@ -265,6 +273,28 @@ const addTag = (rawTag) => {
 
 const removeTag = (tag) => {
   selectedTags.value = selectedTags.value.filter((x) => x !== tag)
+}
+
+const optionLabel = (index) => {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+  if (index < alphabet.length) return alphabet[index]
+  const head = Math.floor(index / alphabet.length) - 1
+  const tail = index % alphabet.length
+  return `${alphabet[Math.max(0, head)]}${alphabet[tail]}`
+}
+
+const addOption = () => {
+  form.options.push('')
+}
+
+const removeOption = () => {
+  if (form.options.length <= 2) return
+  const removedIndex = form.options.length - 1
+  form.options.pop()
+  if (form.correct_option >= form.options.length) {
+    form.correct_option = Math.max(0, form.options.length - 1)
+  }
+  form.correct_options = (form.correct_options || []).filter((idx) => idx !== removedIndex)
 }
 
 const toPayload = () => {
@@ -304,7 +334,6 @@ const toPayload = () => {
   return {
     ...base,
     reference_answer: form.reference_answer,
-    keyword_answers: form.keyword_answers,
   }
 }
 
@@ -381,11 +410,10 @@ const startEdit = (item) => {
   form.difficulty = item.difficulty || 3
   form.text = item.text
   form.score = item.score
-  form.options = item.options || ['', '', '', '']
+  form.options = Array.isArray(item.options) && item.options.length >= 2 ? item.options : ['', '']
   form.correct_option = item.correct_option ?? 0
   form.correct_options = Array.isArray(item.correct_options) ? item.correct_options : []
   form.reference_answer = item.reference_answer || ''
-  form.keyword_answers = item.keyword_answers || ''
   selectedTags.value = item.tags ? item.tags.split(',').map((t) => t.trim()).filter(Boolean) : []
 }
 
@@ -398,6 +426,17 @@ const removeItem = async (id) => {
   } catch (err) {
     error.value = err?.response?.data?.error || '删除失败'
   }
+}
+
+const questionTypeText = (questionType) => {
+  const mapping = {
+    single: '单选',
+    multiple: '多选',
+    judge: '判断',
+    short: '简答',
+    subjective: '简答',
+  }
+  return mapping[questionType] || questionType
 }
 
 onMounted(async () => {
@@ -417,13 +456,22 @@ onMounted(async () => {
   color: var(--danger);
 }
 
-.actions {
-  align-items: flex-end;
-}
-
 .ghost.active {
   border-color: var(--brand);
   color: var(--brand-deep);
+}
+
+.mini-input {
+  width: 220px;
+}
+
+.mini-select {
+  width: 130px;
+}
+
+.tiny-btn {
+  padding: 0.35rem 0.6rem;
+  font-size: 0.8rem;
 }
 
 .tag-chip {

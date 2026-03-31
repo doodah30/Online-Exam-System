@@ -40,8 +40,14 @@
         <button class="ghost" @click="loadCourses">刷新</button>
       </div>
 
-      <p v-if="loadingList" class="muted">加载中...</p>
-      <p v-else-if="courses.length === 0" class="muted">暂无课程</p>
+      <SkeletonBlock v-if="loadingList" :rows="3" />
+      <EmptyState
+        v-else-if="courses.length === 0"
+        title="还没有课程"
+        description="先创建第一门课程，再去添加学生和发布考试。"
+        action-text="去创建课程"
+        @action="mode = 'create'"
+      />
 
       <div v-else class="stack-sm">
         <div v-for="course in courses" :key="course.id" class="card stack-sm">
@@ -64,38 +70,69 @@
         <button class="ghost" @click="closeCourse">关闭</button>
       </div>
 
-      <div class="grid two-col">
-        <label>
-          搜索学生
-          <input v-model.trim="studentSearch" placeholder="按用户名搜索" @input="searchAllStudents" />
-        </label>
-        <label>
-          已选人数
-          <input :value="selectedUsers.size" disabled />
-        </label>
+      <div class="toolbar">
+        <h4>学生列表</h4>
+        <div class="toolbar-controls">
+          <input class="mini-input" v-model.trim="studentSearch" placeholder="按用户名搜索" @input="searchAllStudents" />
+          <button class="ghost" @click="selectAllVisible">全选当前页</button>
+          <button class="ghost" @click="clearSelected">清空选择</button>
+          <button class="primary" @click="addSelectedStudents">添加已选（{{ selectedUsers.size }}）</button>
+        </div>
       </div>
 
-      <div class="row-wrap">
-        <button class="ghost" @click="selectAllVisible">全选当前列表</button>
-        <button class="ghost" @click="clearSelected">清空选择</button>
-        <button class="primary" @click="addSelectedStudents">一键添加已选学生</button>
+      <SkeletonBlock v-if="loadingStudents" :rows="2" />
+      <div v-else-if="studentOptions.length" class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>选择</th>
+              <th>用户ID</th>
+              <th>用户名</th>
+              <th>状态</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="stu in studentOptions" :key="stu.id">
+              <td>
+                <input type="checkbox" :checked="selectedUsers.has(stu.username)" @change="toggleUser(stu.username)" />
+              </td>
+              <td>#{{ stu.id }}</td>
+              <td>{{ stu.username }}</td>
+              <td>
+                <span class="pill pill-success">可添加</span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
       </div>
-
-      <div class="student-grid">
-        <label v-for="stu in studentOptions" :key="stu.id" class="student-item">
-          <input type="checkbox" :checked="selectedUsers.has(stu.username)" @change="toggleUser(stu.username)" />
-          <span>{{ stu.username }}</span>
-        </label>
-      </div>
+      <EmptyState v-else title="没有匹配学生" description="试试更短的关键字，或先在管理员端创建学生账号。" />
 
       <div class="stack-sm">
         <h4>当前课程学生</h4>
-        <p v-if="courseStudents.length === 0" class="muted">暂无学生</p>
-        <div class="row-wrap" v-else>
-          <span v-for="stu in courseStudents" :key="stu.id" class="tag">
-            {{ stu.username }}
-            <button class="remove-btn" @click="removeStudent(stu.username)">x</button>
-          </span>
+        <EmptyState
+          v-if="courseStudents.length === 0"
+          title="课程还没有学生"
+          description="请先从上方列表勾选学生并添加到课程。"
+        />
+        <div v-else class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>用户ID</th>
+                <th>用户名</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="stu in courseStudents" :key="stu.id">
+                <td>#{{ stu.id }}</td>
+                <td>{{ stu.username }}</td>
+                <td>
+                  <button class="ghost danger-lite tiny-btn" @click="removeStudent(stu.username)">移出课程</button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </div>
     </article>
@@ -109,6 +146,8 @@ import { onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { api } from '../api'
+import EmptyState from '../components/EmptyState.vue'
+import SkeletonBlock from '../components/SkeletonBlock.vue'
 
 const router = useRouter()
 
@@ -129,6 +168,7 @@ const studentSearch = ref('')
 const studentOptions = ref([])
 const courseStudents = ref([])
 const selectedUsers = ref(new Set())
+const loadingStudents = ref(false)
 
 const goCenter = () => router.push('/teacher')
 
@@ -178,11 +218,14 @@ const closeCourse = () => {
 
 const searchAllStudents = async () => {
   if (!activeCourse.value) return
+  loadingStudents.value = true
   try {
     const res = await api.get('/students/', { params: { q: studentSearch.value } })
     studentOptions.value = res.data
   } catch (err) {
     error.value = err?.response?.data?.error || '搜索学生失败'
+  } finally {
+    loadingStudents.value = false
   }
 }
 
@@ -254,23 +297,18 @@ onMounted(loadCourses)
   color: var(--brand-deep);
 }
 
-.student-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0.5rem;
+.danger-lite {
+  color: var(--danger);
 }
 
-.student-item {
-  display: flex;
-  align-items: center;
-  gap: 0.45rem;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 0.35rem 0.5rem;
+
+.mini-input {
+  width: 220px;
 }
 
-.student-item input {
-  width: auto;
+.tiny-btn {
+  padding: 0.35rem 0.6rem;
+  font-size: 0.8rem;
 }
 
 .tag {
@@ -291,9 +329,4 @@ onMounted(loadCourses)
   font-weight: 700;
 }
 
-@media (max-width: 900px) {
-  .student-grid {
-    grid-template-columns: 1fr;
-  }
-}
 </style>

@@ -56,11 +56,6 @@
                 <p class="tiny">标准答案：{{ optionSetLabel(ans.correct_options) }}</p>
                 <p class="tiny">得分：{{ ans.score_awarded }} / {{ ans.full_score }}</p>
               </template>
-              <template v-else-if="ans.question_type === 'blank'">
-                <p class="tiny">学生答案：{{ ans.subjective_answer || '空' }}</p>
-                <p class="tiny">标准答案：{{ ans.reference_answer || '未填写' }}</p>
-                <p class="tiny">得分：{{ ans.score_awarded }} / {{ ans.full_score }}</p>
-              </template>
               <template v-else>
                 <p class="tiny">学生答案：{{ ans.subjective_answer || '空' }}</p>
                 <p class="tiny">标准答案：{{ ans.reference_answer || '未填写' }}</p>
@@ -208,8 +203,16 @@ const optionLabel = (value, questionType = 'single') => {
     if (index === 0) return '正确'
     if (index === 1) return '错误'
   }
-  if (Number.isNaN(index) || index < 0 || index > 3) return String(value)
-  return ['A', 'B', 'C', 'D'][index]
+  if (Number.isNaN(index) || index < 0) return String(value)
+  return optionCode(index)
+}
+
+const optionCode = (index) => {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+  if (index < alphabet.length) return alphabet[index]
+  const head = Math.floor(index / alphabet.length) - 1
+  const tail = index % alphabet.length
+  return `${alphabet[Math.max(0, head)]}${alphabet[tail]}`
 }
 
 const optionSetLabel = (values) => {
@@ -222,7 +225,6 @@ const questionTypeLabel = (questionType) => {
     single: '单选',
     multiple: '多选',
     judge: '判断',
-    blank: '填空',
     short: '简答',
   }
   return map[questionType] || questionType

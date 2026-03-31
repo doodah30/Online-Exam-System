@@ -14,8 +14,14 @@
         <button class="ghost" @click="loadResults">刷新</button>
       </div>
 
-      <p v-if="loading" class="muted">加载中...</p>
-      <p v-else-if="results.length === 0" class="muted">还没有成绩记录</p>
+      <SkeletonBlock v-if="loading" :rows="3" />
+      <EmptyState
+        v-else-if="results.length === 0"
+        title="还没有成绩记录"
+        description="你暂时没有提交记录，先去参加一场考试吧。"
+        action-text="去参加考试"
+        @action="router.push('/student/exams')"
+      />
 
       <div v-else class="stack-sm">
         <div v-for="item in results" :key="item.submission_id" class="card exam-row">
@@ -23,7 +29,12 @@
             <h4>{{ item.exam_title }}</h4>
             <p class="tiny">提交时间：{{ formatDate(item.submitted_at) }}</p>
             <p class="tiny" v-if="item.course_name">课程：{{ item.course_name }}</p>
-            <p class="tiny" v-if="!item.is_result_published">状态：已提交，待老师发布成绩</p>
+            <p class="tiny">
+              状态：
+              <span class="pill" :class="item.is_result_published ? 'pill-success' : 'pill-draft'">
+                {{ item.is_result_published ? '已发布' : '待发布' }}
+              </span>
+            </p>
           </div>
           <div class="stack-sm score-box">
             <div class="score-pill">{{ item.is_result_published ? `${item.total_score} / ${item.max_score}` : '-- / --' }}</div>
@@ -42,6 +53,8 @@ import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { api } from '../api'
+import EmptyState from '../components/EmptyState.vue'
+import SkeletonBlock from '../components/SkeletonBlock.vue'
 import { authState } from '../stores/auth'
 
 const router = useRouter()

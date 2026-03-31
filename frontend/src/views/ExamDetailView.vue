@@ -1,80 +1,106 @@
 <template>
-  <section class="stack-lg">
-    <article class="panel row-between">
+  <section class="exam-focus-shell stack-lg">
+    <header class="exam-sticky">
       <div>
-        <h2>{{ exam.title }}</h2>
-        <p class="muted">{{ exam.description || '暂无描述' }}</p>
-        <p class="tiny">考试时长：{{ exam.duration_minutes }} 分钟 · 题目数：{{ exam.questions?.length || 0 }}</p>
+        <h2>{{ exam.title || '考试中' }}</h2>
+        <p class="tiny">{{ exam.description || '请专注作答，交卷后将返回学生首页。' }}</p>
       </div>
-      <div class="row-wrap">
-        <BackButton />
-        <div v-if="showTimer" class="timer-pill" :class="{ danger: timeLeft <= 60 }">
-          倒计时：{{ timerText }}
+
+      <div class="exam-actions">
+        <span v-if="exam.questions.length" class="tiny progress-text">第 {{ currentIndex + 1 }} / {{ exam.questions.length }} 题</span>
+        <div v-if="showTimer" class="timer-pill" :class="{ danger: timeLeft <= 60 }">{{ timerText }}</div>
+        <button class="ghost" @click="goBack">返回</button>
+        <button
+          v-if="!isTeacher && !exam.attempted && !submitted"
+          class="primary"
+          :disabled="submitting"
+          @click="confirmAndSubmit"
+        >
+          {{ submitting ? '交卷中...' : '交卷' }}
+        </button>
+      </div>
+    </header>
+
+    <article v-if="loading" class="panel">
+      <SkeletonBlock :rows="4" />
+    </article>
+
+    <article v-else class="exam-layout">
+      <aside class="panel nav-panel stack-sm">
+        <div class="row-between">
+          <h4>题目导航</h4>
+          <span class="tiny">已答 {{ answeredCount }} / {{ exam.questions.length }}</span>
         </div>
-      </div>
-    </article>
 
-    <article class="panel stack" v-if="loading">加载中...</article>
-
-    <article v-else class="panel stack">
-      <div v-for="(q, idx) in exam.questions" :key="q.id" class="card stack-sm">
-        <h4>{{ idx + 1 }}. {{ q.text }} <span class="tiny">（{{ questionTypeLabel(q.question_type) }}）</span></h4>
-
-        <template v-if="isChoiceType(q.question_type)">
+        <div class="question-grid">
           <button
-            v-for="(opt, oIdx) in displayOptions(q)"
-            :key="oIdx"
-            class="choice-row"
-            :class="{ selected: isOptionSelected(q, oIdx) }"
+            v-for="(q, idx) in exam.questions"
+            :key="q.id"
+            class="q-index"
+            :class="{
+              current: idx === currentIndex,
+              answered: questionAnswered(q),
+            }"
             type="button"
-            :disabled="isTeacher || exam.attempted || submitted"
-            @click="selectOption(q.id, oIdx)"
+            @click="currentIndex = idx"
           >
-            {{ String.fromCharCode(65 + oIdx) }}. {{ opt }}
+            {{ idx + 1 }}
           </button>
-        </template>
+        </div>
+      </aside>
 
-        <template v-else-if="q.question_type === 'blank'">
-          <input
-            v-model="answers[q.id]"
-            :disabled="isTeacher || exam.attempted || submitted"
-            type="text"
-            placeholder="请输入填空答案"
-          />
-        </template>
+      <main class="panel question-panel stack">
+        <template v-if="currentQuestion">
+          <div class="row-between">
+            <h3>第 {{ currentIndex + 1 }} 题</h3>
+            <span class="pill pill-draft">{{ questionTypeLabel(currentQuestion.question_type) }} · {{ currentQuestion.score }}分</span>
+          </div>
 
-        <template v-else>
+          <p class="question-text">{{ currentQuestion.text }}</p>
+
+          <div v-if="isChoiceType(currentQuestion.question_type)" class="stack-sm">
+            <button
+              v-for="(opt, oIdx) in displayOptions(currentQuestion)"
+              :key="`${currentQuestion.id}-${oIdx}`"
+              class="choice-row"
+              :class="{ selected: isOptionSelected(currentQuestion, oIdx) }"
+              type="button"
+              :disabled="isReadOnly"
+              @click="selectOption(currentQuestion.id, oIdx)"
+            >
+              <span class="choice-mark">{{ isOptionSelected(currentQuestion, oIdx) ? '✓' : optionCode(oIdx) }}</span>
+              <span>{{ opt }}</span>
+            </button>
+          </div>
+
           <textarea
-            v-model="answers[q.id]"
-            rows="3"
-            :disabled="isTeacher || exam.attempted || submitted"
-            placeholder="请输入主观题答案"
+            v-if="!isChoiceType(currentQuestion.question_type)"
+            v-model="answers[currentQuestion.id]"
+            rows="8"
+            :disabled="isReadOnly"
+            placeholder="请输入你的答案"
           ></textarea>
+
+          <p v-if="isTeacher && (currentQuestion.question_type === 'single' || currentQuestion.question_type === 'judge')" class="tiny">
+            标准答案：{{ letter(currentQuestion.correct_option) }}
+          </p>
+          <p v-if="isTeacher && currentQuestion.question_type === 'multiple'" class="tiny">
+            标准答案：{{ optionSetLabel(currentQuestion.correct_options || []) }}
+          </p>
+          <p v-if="isTeacher && currentQuestion.question_type === 'short'" class="tiny">
+            参考答案：{{ currentQuestion.reference_answer || '未设置' }}
+          </p>
+
+          <div class="row-between">
+            <button class="ghost" :disabled="currentIndex === 0" @click="currentIndex -= 1">上一题</button>
+            <button class="ghost" :disabled="currentIndex >= exam.questions.length - 1" @click="currentIndex += 1">下一题</button>
+          </div>
         </template>
-
-        <p v-if="isTeacher && (q.question_type === 'single' || q.question_type === 'judge')" class="tiny">
-          答案：{{ letter(q.correct_option) }} · 分值：{{ q.score }}
-        </p>
-        <p v-if="isTeacher && q.question_type === 'multiple'" class="tiny">
-          答案：{{ optionSetLabel(q.correct_options || []) }} · 分值：{{ q.score }}
-        </p>
-        <p v-if="isTeacher && (q.question_type === 'blank' || q.question_type === 'short')" class="tiny">
-          参考答案：{{ q.reference_answer || '未设置' }} · 关键词：{{ q.keyword_answers || '未设置' }} · 分值：{{ q.score }}
-        </p>
-      </div>
-
-      <button
-        v-if="!isTeacher && !exam.attempted && !submitted"
-        class="primary"
-        :disabled="submitting"
-        @click="confirmAndSubmit"
-      >
-        {{ submitting ? '提交中...' : '提交试卷' }}
-      </button>
-
-      <p v-if="exam.attempted && !result && !isTeacher" class="muted">你已提交该试卷，可在仪表盘查看成绩。</p>
-      <p v-if="error" class="error">{{ error }}</p>
+      </main>
     </article>
+
+    <p v-if="exam.attempted && !result && !isTeacher" class="muted">你已提交该试卷，可在仪表盘查看成绩。</p>
+    <p v-if="error" class="error">{{ error }}</p>
   </section>
 </template>
 
@@ -83,7 +109,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { api } from '../api'
-import BackButton from '../components/BackButton.vue'
+import SkeletonBlock from '../components/SkeletonBlock.vue'
 import { authState } from '../stores/auth'
 
 const route = useRoute()
@@ -106,14 +132,18 @@ const result = ref(null)
 const answers = reactive({})
 const timeLeft = ref(0)
 let timerId = null
+const currentIndex = ref(0)
 
 const isTeacher = computed(() => authState.user.role === 'teacher')
 const submitted = computed(() => Boolean(result.value))
+const isReadOnly = computed(() => isTeacher.value || exam.attempted || submitted.value)
+const currentQuestion = computed(() => exam.questions[currentIndex.value] || null)
 const showTimer = computed(() => !isTeacher.value && !exam.attempted && !submitted.value && timeLeft.value > 0)
+const answeredCount = computed(() => exam.questions.filter((q) => questionAnswered(q)).length)
 const timerText = computed(() => {
   const m = String(Math.floor(timeLeft.value / 60)).padStart(2, '0')
   const s = String(timeLeft.value % 60).padStart(2, '0')
-  return `${m}:${s}`
+  return `剩余 ${m}:${s}`
 })
 
 const getTimerStorageKey = () => `exam_start_${authState.user.id}_${examId}`
@@ -161,11 +191,12 @@ const loadExam = async () => {
   try {
     const response = await api.get(`/exams/${examId}/`)
     Object.assign(exam, response.data)
+    currentIndex.value = 0
     exam.questions.forEach((q) => {
       if (q.question_type === 'multiple' && !Array.isArray(answers[q.id])) {
         answers[q.id] = []
       }
-      if ((q.question_type === 'blank' || q.question_type === 'short') && answers[q.id] === undefined) {
+      if (q.question_type === 'short' && answers[q.id] === undefined) {
         answers[q.id] = ''
       }
     })
@@ -178,6 +209,17 @@ const loadExam = async () => {
 }
 
 const isChoiceType = (questionType) => ['single', 'multiple', 'judge'].includes(questionType)
+
+const questionAnswered = (question) => {
+  const answer = answers[question.id]
+  if (question.question_type === 'multiple') {
+    return Array.isArray(answer) && answer.length > 0
+  }
+  if (question.question_type === 'short') {
+    return String(answer || '').trim().length > 0
+  }
+  return answer !== null && answer !== undefined && String(answer) !== ''
+}
 
 const displayOptions = (question) => {
   const opts = Array.isArray(question.options) ? question.options : []
@@ -192,7 +234,6 @@ const questionTypeLabel = (questionType) => {
     single: '单选题',
     multiple: '多选题',
     judge: '判断题',
-    blank: '填空题',
     short: '简答题',
     subjective: '简答题',
   }
@@ -233,6 +274,18 @@ const confirmAndSubmit = async () => {
   const ok = window.confirm('确认提交试卷吗？提交后将直接返回学生首页。')
   if (!ok) return
   await submit(false)
+}
+
+const goBack = () => {
+  if (window.history.length > 1) {
+    router.back()
+    return
+  }
+  if (isTeacher.value) {
+    router.push('/teacher')
+    return
+  }
+  router.push('/dashboard')
 }
 
 const submit = async (autoSubmit = false) => {
@@ -276,42 +329,153 @@ const submit = async (autoSubmit = false) => {
   }
 }
 
-const letter = (idx) => String.fromCharCode(65 + idx)
+const optionCode = (index) => {
+  if (Number.isNaN(index) || index < 0) return String(index)
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+  if (index < alphabet.length) return alphabet[index]
+  const head = Math.floor(index / alphabet.length) - 1
+  const tail = index % alphabet.length
+  return `${alphabet[Math.max(0, head)]}${alphabet[tail]}`
+}
+
+const letter = (idx) => optionCode(Number(idx))
 
 onMounted(loadExam)
 onBeforeUnmount(clearCountdown)
 </script>
 
 <style scoped>
+.exam-focus-shell {
+  padding: 1rem;
+}
+
+.exam-sticky {
+  position: sticky;
+  top: 0;
+  z-index: 8;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(8px);
+  box-shadow: var(--shadow-sm);
+}
+
+.exam-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.progress-text {
+  min-width: 86px;
+  text-align: right;
+}
+
+.exam-layout {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+.nav-panel {
+  position: sticky;
+  top: 84px;
+}
+
+.question-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.q-index {
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  height: 38px;
+  font-weight: 700;
+  background: #fff;
+}
+
+.q-index.answered {
+  border-color: #34d399;
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.q-index.current {
+  border-color: #2563eb;
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.question-panel {
+  min-height: 520px;
+}
+
+.question-text {
+  font-size: 1.06rem;
+  line-height: 1.7;
+  white-space: pre-wrap;
+}
+
 .choice-row {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
   width: 100%;
   text-align: left;
   cursor: pointer;
-  color: inherit;
+  color: var(--ink);
   background: #fff;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 0.6rem 0.75rem;
+  border: 1px solid #dbe3f0;
+  border-radius: 12px;
+  padding: 0.82rem 0.95rem;
+}
+
+.choice-mark {
+  width: 24px;
+  height: 24px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 999px;
+  border: 1px solid #bfdbfe;
+  color: var(--brand);
+  font-size: 0.85rem;
+  font-weight: 800;
+  background: #eff6ff;
 }
 
 .choice-row:not(.selected):hover:not(:disabled) {
-  border-color: #3f8f68;
-  background: #eef9f3;
+  border-color: #3b82f6;
+  background: #eff6ff;
 }
 
 .choice-row.selected {
-  border-color: #146b43;
-  background: #1f8b5f;
-  color: #fff;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.25);
+  border-color: #2563eb;
+  background: #eff6ff;
+  color: #1e3a8a;
+  box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.2);
   font-weight: 700;
 }
 
-.choice-row.selected:hover:not(:disabled) {
-  border-color: #0f5a37;
-  background: #146b43;
+.choice-row.selected .choice-mark {
+  border-color: #2563eb;
+  background: #2563eb;
   color: #fff;
+}
+
+.choice-row.selected:hover:not(:disabled) {
+  border-color: #1d4ed8;
+  background: #dbeafe;
+  color: #1e3a8a;
 }
 
 .choice-row:disabled {
@@ -319,30 +483,44 @@ onBeforeUnmount(clearCountdown)
   cursor: not-allowed;
 }
 
-.score-result {
-  border: 1px solid var(--ok-line);
-  background: var(--ok-soft);
-  border-radius: 14px;
-  padding: 0.9rem 1rem;
-}
-
 .timer-pill {
-  background: #f3fbf7;
-  border: 1px solid #cfe6da;
-  color: var(--brand-deep);
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  color: #1e40af;
   border-radius: 999px;
   padding: 0.38rem 0.75rem;
   font-weight: 700;
 }
 
 .timer-pill.danger {
-  background: #fff2f2;
-  border-color: #f3c8c8;
+  background: #fef2f2;
+  border-color: #fecaca;
   color: var(--danger);
+  animation: pulse-alert 1s infinite;
 }
 
 .error {
   color: var(--danger);
   font-weight: 700;
+}
+
+@media (max-width: 900px) {
+  .exam-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .nav-panel {
+    position: static;
+  }
+
+  .exam-sticky {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .exam-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
 }
 </style>

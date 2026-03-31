@@ -53,13 +53,12 @@ class Exam(models.Model):
 
 
 class Question(models.Model):
-	"""试卷题目表：支持单选/多选/判断/填空/简答。"""
+	"""试卷题目表：支持单选/多选/判断/简答。"""
 
 	QUESTION_TYPE_CHOICES = (
 		('single', 'Single Choice'),
 		('multiple', 'Multiple Choice'),
 		('judge', 'True or False'),
-		('blank', 'Fill in Blank'),
 		('short', 'Short Answer'),
 		('subjective', 'Subjective (Legacy)'),
 	)
@@ -71,6 +70,7 @@ class Question(models.Model):
 	option_b = models.CharField(max_length=255, blank=True)
 	option_c = models.CharField(max_length=255, blank=True)
 	option_d = models.CharField(max_length=255, blank=True)
+	options_json = models.TextField(blank=True)
 	correct_option = models.IntegerField(null=True, blank=True)
 	correct_options = models.CharField(max_length=50, blank=True)
 	reference_answer = models.TextField(blank=True)
@@ -165,6 +165,7 @@ class QuestionBankItem(models.Model):
 	option_b = models.CharField(max_length=255, blank=True)
 	option_c = models.CharField(max_length=255, blank=True)
 	option_d = models.CharField(max_length=255, blank=True)
+	options_json = models.TextField(blank=True)
 	correct_option = models.IntegerField(null=True, blank=True)
 	correct_options = models.CharField(max_length=50, blank=True)
 	reference_answer = models.TextField(blank=True)

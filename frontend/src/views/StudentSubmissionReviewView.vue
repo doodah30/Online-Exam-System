@@ -141,18 +141,19 @@ const labelType = (qType) => {
     single: '单选题',
     multiple: '多选题',
     judge: '判断题',
-    blank: '填空题',
     short: '简答题',
   }
   return map[qType] || qType
 }
 
 const letter = (idx) => {
-  if (idx === 0) return 'A'
-  if (idx === 1) return 'B'
-  if (idx === 2) return 'C'
-  if (idx === 3) return 'D'
-  return String(idx)
+  const n = Number(idx)
+  if (Number.isNaN(n) || n < 0) return String(idx)
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+  if (n < alphabet.length) return alphabet[n]
+  const head = Math.floor(n / alphabet.length) - 1
+  const tail = n % alphabet.length
+  return `${alphabet[Math.max(0, head)]}${alphabet[tail]}`
 }
 
 const formatDate = (dateText) => (dateText ? new Date(dateText).toLocaleString() : '--')

@@ -103,7 +103,6 @@
                   <option value="single">单选题</option>
                   <option value="multiple">多选题</option>
                   <option value="judge">判断题</option>
-                  <option value="blank">填空题</option>
                   <option value="short">简答题</option>
                 </select>
               </label>
@@ -119,9 +118,14 @@
             </label>
 
             <template v-if="q.question_type === 'single' || q.question_type === 'multiple'">
+              <div class="row-wrap">
+                <button class="ghost" type="button" @click="addOptionFor(q)">新增选项</button>
+                <button class="ghost" type="button" :disabled="q.options.length <= 2" @click="removeOptionFor(q)">删除最后一个选项</button>
+              </div>
+
               <div class="grid two-col">
                 <label v-for="(opt, i) in q.options" :key="i">
-                  选项 {{ String.fromCharCode(65 + i) }}
+                  选项 {{ optionLabel(i) }}
                   <input v-model.trim="q.options[i]" required />
                 </label>
               </div>
@@ -129,18 +133,17 @@
               <label v-if="q.question_type === 'single'">
                 正确选项
                 <select v-model.number="q.correct_option">
-                  <option :value="0">A</option>
-                  <option :value="1">B</option>
-                  <option :value="2">C</option>
-                  <option :value="3">D</option>
+                  <option v-for="(_, idx) in q.options" :key="`${q.localId}-single-${idx}`" :value="idx">
+                    {{ optionLabel(idx) }}
+                  </option>
                 </select>
               </label>
 
               <div v-else class="stack-sm">
                 <p class="tiny">正确选项（可多选）</p>
-                <label v-for="opt in [0, 1, 2, 3]" :key="`${q.localId}-co-${opt}`" class="tiny checkbox-line">
-                  <input type="checkbox" :value="opt" v-model="q.correct_options" />
-                  {{ String.fromCharCode(65 + opt) }}
+                <label v-for="(_, idx) in q.options" :key="`${q.localId}-co-${idx}`" class="tiny checkbox-line">
+                  <input type="checkbox" :value="idx" v-model="q.correct_options" />
+                  {{ optionLabel(idx) }}
                 </label>
               </div>
             </template>
@@ -159,10 +162,6 @@
               <label>
                 参考答案
                 <textarea v-model.trim="q.reference_answer" rows="2"></textarea>
-              </label>
-              <label>
-                关键词（逗号分隔）
-                <input v-model.trim="q.keyword_answers" />
               </label>
             </template>
 
@@ -256,7 +255,6 @@ const makeQuestion = () => ({
   correct_option: 0,
   correct_options: [0],
   reference_answer: '',
-  keyword_answers: '',
   subject_tag: 'common',
   tags: '',
   difficulty: 3,
@@ -340,6 +338,29 @@ const removeQuestion = (index) => {
   examForm.questions.splice(index, 1)
 }
 
+const optionLabel = (index) => {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+  if (index < alphabet.length) return alphabet[index]
+  const head = Math.floor(index / alphabet.length) - 1
+  const tail = index % alphabet.length
+  return `${alphabet[Math.max(0, head)]}${alphabet[tail]}`
+}
+
+const addOptionFor = (question) => {
+  if (!Array.isArray(question.options)) question.options = ['', '']
+  question.options.push('')
+}
+
+const removeOptionFor = (question) => {
+  if (!Array.isArray(question.options) || question.options.length <= 2) return
+  const removedIndex = question.options.length - 1
+  question.options.pop()
+  if (question.correct_option >= question.options.length) {
+    question.correct_option = Math.max(0, question.options.length - 1)
+  }
+  question.correct_options = (question.correct_options || []).filter((idx) => idx !== removedIndex)
+}
+
 const openDetail = (localId) => {
   editingQuestionId.value = localId
 }
@@ -408,11 +429,10 @@ const appendPickedQuestions = async () => {
     q.question_type = item.question_type
     q.text = item.text
     q.score = item.score
-    q.options = item.options || ['', '', '', '']
+    q.options = Array.isArray(item.options) && item.options.length >= 2 ? item.options : ['', '']
     q.correct_option = item.correct_option ?? 0
     q.correct_options = Array.isArray(item.correct_options) ? item.correct_options : []
     q.reference_answer = item.reference_answer || ''
-    q.keyword_answers = item.keyword_answers || ''
     q.subject_tag = item.subject_tag || 'common'
     q.tags = item.tags || ''
     q.difficulty = item.difficulty || 3
@@ -451,7 +471,6 @@ const normalizeQuestion = (q) => {
   return {
     ...base,
     reference_answer: q.reference_answer,
-    keyword_answers: q.keyword_answers,
   }
 }
 

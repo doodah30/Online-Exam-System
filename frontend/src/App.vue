@@ -1,6 +1,6 @@
 <template>
   <div class="app-shell">
-    <header class="topbar">
+    <header v-if="!isExamFocus" class="topbar">
       <div class="brand" @click="goDashboard">
         <span class="brand-dot"></span>
         <div>
@@ -19,7 +19,7 @@
       </nav>
     </header>
 
-    <main class="page-wrap">
+    <main class="page-wrap" :class="{ 'page-wrap-focus': isExamFocus }">
       <router-view />
     </main>
   </div>
@@ -41,6 +41,8 @@ const roleText = computed(() => {
   if (auth.user.role === 'admin') return '管理员'
   return '学生'
 })
+
+const isExamFocus = computed(() => route.name === 'exam-detail' && auth.user.role === 'student')
 
 const showAuthEntry = computed(() => !auth.isAuthenticated && route.path !== '/auth')
 
@@ -128,7 +130,7 @@ onBeforeUnmount(() => {
   position: sticky;
   top: 0;
   z-index: 10;
-  background: color-mix(in srgb, var(--bg-2) 84%, white 16%);
+  background: rgba(248, 250, 252, 0.86);
 }
 
 .brand {
@@ -143,7 +145,7 @@ onBeforeUnmount(() => {
   height: 14px;
   border-radius: 999px;
   background: linear-gradient(135deg, var(--brand), var(--brand-2));
-  box-shadow: 0 0 0 8px color-mix(in srgb, var(--brand) 18%, transparent);
+  box-shadow: 0 0 0 8px rgba(37, 99, 235, 0.15);
 }
 
 .brand h1 {
@@ -177,6 +179,11 @@ onBeforeUnmount(() => {
   width: min(1120px, calc(100% - 2rem));
   margin: 2rem auto 3rem;
   animation: rise 0.55s ease;
+}
+
+.page-wrap-focus {
+  width: 100%;
+  margin: 0;
 }
 
 .ghost,

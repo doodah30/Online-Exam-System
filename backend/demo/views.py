@@ -1,3 +1,4 @@
+import json
 import random
 from datetime import timedelta
 from django.contrib.auth import authenticate
@@ -96,15 +97,61 @@ def _split_tags(raw_tags):
     return [item.strip() for item in str(raw_tags).split(',') if item.strip()]
 
 
-QUESTION_TYPE_SET = {'single', 'multiple', 'judge', 'blank', 'short', 'subjective'}
+QUESTION_TYPE_SET = {'single', 'multiple', 'judge', 'short', 'subjective'}
 MANUAL_GRADE_TYPES = {'short', 'subjective'}
 
 
 def _normalize_question_type(question_type):
     raw = str(question_type or 'single').strip().lower()
-    if raw == 'subjective':
+    if raw in ('subjective', 'blank'):
         return 'short'
     return raw
+
+
+def _serialize_options(option_list):
+    return json.dumps(option_list, ensure_ascii=False)
+
+
+def _legacy_options_to_list(option_a, option_b, option_c, option_d):
+    return [opt for opt in [option_a, option_b, option_c, option_d] if str(opt or '').strip()]
+
+
+def _extract_options(record):
+    raw = str(getattr(record, 'options_json', '') or '').strip()
+    if raw:
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                clean = [str(opt).strip() for opt in parsed if str(opt).strip()]
+                if clean:
+                    return clean
+        except (TypeError, ValueError, json.JSONDecodeError):
+            pass
+
+    fallback = _legacy_options_to_list(
+        getattr(record, 'option_a', ''),
+        getattr(record, 'option_b', ''),
+        getattr(record, 'option_c', ''),
+        getattr(record, 'option_d', ''),
+    )
+    if fallback:
+        return fallback
+
+    if _normalize_question_type(getattr(record, 'question_type', '')) == 'judge':
+        return ['正确', '错误']
+    return []
+
+
+def _build_legacy_option_fields(option_list):
+    option_list = option_list[:4]
+    while len(option_list) < 4:
+        option_list.append('')
+    return {
+        'option_a': option_list[0],
+        'option_b': option_list[1],
+        'option_c': option_list[2],
+        'option_d': option_list[3],
+    }
 
 
 def _parse_index_list(raw):
@@ -208,8 +255,8 @@ def _grade_subjective(answer_text, keywords, full_score):
 
 
 def _validate_choice_options(option_list, question_type):
-    if not isinstance(option_list, list) or len(option_list) != 4:
-        return None, f'{question_type} 题型必须提供 4 个选项'
+    if not isinstance(option_list, list) or len(option_list) < 2:
+        return None, f'{question_type} 题型至少提供 2 个选项'
     clean_options = [str(opt).strip() for opt in option_list]
     if not all(clean_options):
         return None, f'{question_type} 题型选项不能为空'
@@ -225,14 +272,14 @@ def _validate_single_question_payload(item):
         correct_option = int(item.get('correct_option', -1))
     except (TypeError, ValueError):
         return None, 'correct_option 必须是数字'
-    if correct_option < 0 or correct_option > 3:
-        return None, 'correct_option 必须在 0~3'
+    if correct_option < 0 or correct_option >= len(options):
+        return None, 'correct_option 超出选项范围'
+
+    legacy_fields = _build_legacy_option_fields(options.copy())
 
     return {
-        'option_a': options[0],
-        'option_b': options[1],
-        'option_c': options[2],
-        'option_d': options[3],
+        **legacy_fields,
+        'options_json': _serialize_options(options),
         'correct_option': correct_option,
         'correct_options': '',
         'reference_answer': '',
@@ -246,15 +293,15 @@ def _validate_multiple_question_payload(item):
         return None, error
 
     correct_options = _parse_index_list(item.get('correct_options', []))
-    valid = [idx for idx in correct_options if 0 <= idx <= 3]
+    valid = [idx for idx in correct_options if 0 <= idx < len(options)]
     if not valid:
         return None, 'multiple 题型至少需要一个正确选项'
 
+    legacy_fields = _build_legacy_option_fields(options.copy())
+
     return {
-        'option_a': options[0],
-        'option_b': options[1],
-        'option_c': options[2],
-        'option_d': options[3],
+        **legacy_fields,
+        'options_json': _serialize_options(options),
         'correct_option': None,
         'correct_options': _join_index_list(valid),
         'reference_answer': '',
@@ -285,6 +332,7 @@ def _validate_judge_question_payload(item):
         'option_b': '错误',
         'option_c': '',
         'option_d': '',
+        'options_json': _serialize_options(['正确', '错误']),
         'correct_option': correct_option,
         'correct_options': '',
         'reference_answer': '',
@@ -294,16 +342,16 @@ def _validate_judge_question_payload(item):
 
 def _validate_text_question_payload(item):
     reference_answer = str(item.get('reference_answer', '')).strip()
-    keyword_answers = str(item.get('keyword_answers', '')).strip()
     return {
         'option_a': '',
         'option_b': '',
         'option_c': '',
         'option_d': '',
+        'options_json': '',
         'correct_option': None,
         'correct_options': '',
         'reference_answer': reference_answer,
-        'keyword_answers': keyword_answers,
+        'keyword_answers': '',
     }, None
 
 
@@ -326,7 +374,7 @@ def _normalize_question_payload(item):
     if not text:
         return None, '题干不能为空'
     if question_type not in QUESTION_TYPE_SET:
-        return None, 'question_type 必须是 single/multiple/judge/blank/short'
+        return None, 'question_type 必须是 single/multiple/judge/short'
 
     if question_type == 'single':
         extra_payload, error = _validate_single_question_payload(item)
@@ -368,22 +416,23 @@ def _normalize_question_payload(item):
 
 def _question_to_dict(question, include_answer=False):
     """把 Question 模型序列化为前端可消费的字典。"""
+    normalized_type = _normalize_question_type(question.question_type)
     payload = {
         'id': question.id,
-        'question_type': question.question_type,
+        'question_type': normalized_type,
         'text': question.text,
         'score': question.score,
     }
 
-    if question.question_type in ('single', 'multiple', 'judge'):
-        payload['options'] = [question.option_a, question.option_b, question.option_c, question.option_d]
-        if question.question_type in ('single', 'judge') and include_answer:
+    if normalized_type in ('single', 'multiple', 'judge'):
+        payload['options'] = _extract_options(question)
+        if normalized_type in ('single', 'judge') and include_answer:
             payload['correct_option'] = question.correct_option
-        if question.question_type == 'multiple' and include_answer:
+        if normalized_type == 'multiple' and include_answer:
             payload['correct_options'] = _parse_index_list(question.correct_options)
     else:
         payload['reference_answer'] = question.reference_answer if include_answer else ''
-        payload['keyword_answers'] = question.keyword_answers if include_answer else ''
+        payload['keyword_answers'] = ''
 
     return payload
 
@@ -394,7 +443,7 @@ def _exam_to_dict(exam, include_questions=False, include_answer=False, attempted
     include_questions=True 时返回题目列表。
     include_answer=True 时返回标准答案字段（仅老师端可用）。
     """
-    has_subjective = exam.questions.filter(question_type__in=MANUAL_GRADE_TYPES).exists()
+    has_subjective = exam.questions.filter(question_type__in=(*MANUAL_GRADE_TYPES, 'blank')).exists()
     payload = {
         'id': exam.id,
         'title': exam.title,
@@ -435,13 +484,13 @@ def _bank_item_to_dict(item):
         'subject_tag': item.subject_tag,
         'tags': item.tags,
         'difficulty': item.difficulty,
-        'question_type': item.question_type,
+        'question_type': _normalize_question_type(item.question_type),
         'text': item.text,
-        'options': [item.option_a, item.option_b, item.option_c, item.option_d],
+        'options': _extract_options(item),
         'correct_option': item.correct_option,
         'correct_options': _parse_index_list(item.correct_options),
         'reference_answer': item.reference_answer,
-        'keyword_answers': item.keyword_answers,
+        'keyword_answers': '',
         'score': item.score,
         'updated_at': item.updated_at,
     }
@@ -483,6 +532,16 @@ def auth_register(request):
         UserProfile.objects.create(user=user, role=role)
         token, _ = Token.objects.get_or_create(user=user)
 
+    _log_operation(
+        request,
+        action='user_login',
+        actor=user,
+        target_type='user',
+        target_id=user.id,
+        target_label=user.username,
+        detail='register and login success',
+    )
+
     return Response(
         {
             'token': token.key,
@@ -515,6 +574,13 @@ def auth_login(request):
             if existing_token and existing_token.created < timezone.now() - timedelta(hours=24):
                 existing_token.delete()
                 existing_token = None
+
+            if existing_token is not None:
+                # 兼容历史问题：管理员曾在创建用户时预生成 token，导致首次登录被误判占用。
+                has_login_log = OperationLog.objects.filter(action='user_login', actor=user).exists()
+                if not has_login_log:
+                    existing_token.delete()
+                    existing_token = None
 
             if existing_token is not None:
                 return Response({'error': '账号在其他设备登录，请重新登录'}, status=409)
@@ -661,6 +727,15 @@ def auth_reset_password_with_code(request):
         target_type='user',
         target_id=user.id,
         target_label=user.username,
+    )
+    _log_operation(
+        request,
+        action='user_login',
+        actor=user,
+        target_type='user',
+        target_id=user.id,
+        target_label=user.username,
+        detail='password reset and login success',
     )
 
     return Response(
@@ -1116,10 +1191,11 @@ def exams(request):
                         'option_b': bank_item.option_b,
                         'option_c': bank_item.option_c,
                         'option_d': bank_item.option_d,
+                        'options_json': bank_item.options_json,
                         'correct_option': bank_item.correct_option,
                         'correct_options': bank_item.correct_options,
                         'reference_answer': bank_item.reference_answer,
-                        'keyword_answers': bank_item.keyword_answers,
+                        'keyword_answers': '',
                         'score': bank_item.score,
                         'subject_tag': bank_item.subject_tag,
                         'tags': bank_item.tags,
@@ -1142,6 +1218,7 @@ def exams(request):
                             'option_b': normalized['option_b'],
                             'option_c': normalized['option_c'],
                             'option_d': normalized['option_d'],
+                            'options_json': normalized['options_json'],
                             'correct_option': normalized['correct_option'],
                             'correct_options': normalized['correct_options'],
                             'reference_answer': normalized['reference_answer'],
@@ -1160,6 +1237,7 @@ def exams(request):
                     'option_b': normalized['option_b'],
                     'option_c': normalized['option_c'],
                     'option_d': normalized['option_d'],
+                    'options_json': normalized['options_json'],
                     'correct_option': normalized['correct_option'],
                     'correct_options': normalized['correct_options'],
                     'reference_answer': normalized['reference_answer'],
@@ -1291,6 +1369,7 @@ def submit_exam(request, exam_id):
             auto_feedback = ''
 
             q_type = _normalize_question_type(question.question_type)
+            option_count = len(_extract_options(question))
 
             if q_type in ('single', 'judge'):
                 if selected is not None:
@@ -1299,8 +1378,8 @@ def submit_exam(request, exam_id):
                     except (TypeError, ValueError):
                         return Response({'error': f'invalid selected option for question {question.id}'}, status=400)
 
-                    if q_type == 'single' and (selected_option < 0 or selected_option > 3):
-                        return Response({'error': f'selected option must be 0~3 for question {question.id}'}, status=400)
+                    if q_type == 'single' and (selected_option < 0 or selected_option >= option_count):
+                        return Response({'error': f'selected option out of range for question {question.id}'}, status=400)
                     if q_type == 'judge' and selected_option not in (0, 1):
                         return Response({'error': f'judge answer must be 0/1 for question {question.id}'}, status=400)
 
@@ -1310,28 +1389,13 @@ def submit_exam(request, exam_id):
 
             elif q_type == 'multiple':
                 chosen = _parse_index_list(selected)
-                chosen = [idx for idx in chosen if 0 <= idx <= 3]
+                chosen = [idx for idx in chosen if 0 <= idx < option_count]
                 selected_options = _join_index_list(chosen)
 
                 expected = _parse_index_list(question.correct_options)
                 is_correct = sorted(chosen) == sorted(expected)
                 score_awarded = question.score if is_correct else 0
                 auto_feedback = '多选题自动判分'
-
-            elif q_type == 'blank':
-                subjective_answer = str(selected or '').strip()
-                if question.keyword_answers:
-                    score_awarded, is_correct, auto_feedback = _grade_subjective(
-                        subjective_answer,
-                        _parse_keywords(question.keyword_answers),
-                        question.score,
-                    )
-                else:
-                    std_text = str(question.reference_answer or '').strip().lower()
-                    ans_text = subjective_answer.lower()
-                    is_correct = bool(std_text) and ans_text == std_text
-                    score_awarded = question.score if is_correct else 0
-                    auto_feedback = '填空题自动判分'
 
             else:
                 has_subjective = True
@@ -1567,7 +1631,7 @@ def exam_submissions(request, exam_id):
                 'question_id': ans.question_id,
                 'question_type': _normalize_question_type(ans.question.question_type),
                 'question_text': ans.question.text,
-                'options': [ans.question.option_a, ans.question.option_b, ans.question.option_c, ans.question.option_d],
+                'options': _extract_options(ans.question),
                 'selected_option': ans.selected_option,
                 'selected_options': _parse_index_list(ans.selected_options),
                 'correct_option': ans.question.correct_option,
@@ -1623,7 +1687,6 @@ def admin_users(request):
         with transaction.atomic():
             user = User.objects.create_user(username=username, password=password, is_active=is_active)
             UserProfile.objects.create(user=user, role=role)
-            Token.objects.get_or_create(user=user)
 
         _log_operation(
             request,
@@ -1754,7 +1817,6 @@ def admin_reset_user_password(request, user_id):
     user.set_password(new_password)
     user.save(update_fields=['password'])
     Token.objects.filter(user=user).delete()
-    Token.objects.get_or_create(user=user)
 
     _log_operation(
         request,
@@ -1971,7 +2033,7 @@ def submission_review(request, submission_id):
                 'question_id': q.id,
                 'question_type': q_type,
                 'question_text': q.text,
-                'options': [q.option_a, q.option_b, q.option_c, q.option_d],
+                'options': _extract_options(q),
                 'selected_option': ans.selected_option,
                 'selected_options': _parse_index_list(ans.selected_options),
                 'subjective_answer': ans.subjective_answer,
