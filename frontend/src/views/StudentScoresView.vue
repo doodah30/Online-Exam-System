@@ -25,7 +25,10 @@
             <p class="tiny" v-if="item.course_name">课程：{{ item.course_name }}</p>
             <p class="tiny" v-if="!item.is_result_published">状态：已提交，待老师发布成绩</p>
           </div>
-          <div class="score-pill">{{ item.is_result_published ? `${item.total_score} / ${item.max_score}` : '-- / --' }}</div>
+          <div class="stack-sm score-box">
+            <div class="score-pill">{{ item.is_result_published ? `${item.total_score} / ${item.max_score}` : '-- / --' }}</div>
+            <button class="ghost" @click="goReview(item.submission_id)">查看答卷</button>
+          </div>
         </div>
       </div>
     </article>
@@ -63,6 +66,10 @@ const goBack = () => {
   router.push('/dashboard')
 }
 
+const goReview = (submissionId) => {
+  router.push(`/submissions/${submissionId}/review`)
+}
+
 const formatDate = (dateText) => new Date(dateText).toLocaleString()
 
 onMounted(async () => {
@@ -79,6 +86,10 @@ onMounted(async () => {
   font-size: 1.1rem;
   font-weight: 800;
   color: var(--brand-deep);
+}
+
+.score-box {
+  align-items: flex-end;
 }
 
 .error {

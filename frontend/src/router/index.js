@@ -4,6 +4,7 @@ import AuthView from '../views/AuthView.vue'
 import DashboardView from '../views/DashboardView.vue'
 import StudentExamsView from '../views/StudentExamsView.vue'
 import StudentScoresView from '../views/StudentScoresView.vue'
+import StudentSubmissionReviewView from '../views/StudentSubmissionReviewView.vue'
 import AdminHomeView from '../views/AdminHomeView.vue'
 import AdminUsersView from '../views/AdminUsersView.vue'
 import AdminLogsView from '../views/AdminLogsView.vue'
@@ -51,6 +52,12 @@ const router = createRouter({
       path: '/student/scores',
       name: 'student-scores',
       component: StudentScoresView,
+      meta: { requiresAuth: true, role: 'student' },
+    },
+    {
+      path: '/submissions/:submissionId/review',
+      name: 'student-submission-review',
+      component: StudentSubmissionReviewView,
       meta: { requiresAuth: true, role: 'student' },
     },
     {

@@ -45,10 +45,20 @@
 
           <div class="stack-sm" v-if="current.answers?.length">
             <div v-for="ans in current.answers" :key="`${current.submission_id}-${ans.question_id}`" class="answer-row">
-              <p class="tiny">第{{ ans.question_no }}题 [{{ ans.question_type === 'single' ? '单选' : '主观' }}]</p>
-              <template v-if="ans.question_type === 'single'">
-                <p class="tiny">学生作答：{{ optionLabel(ans.selected_option) }}</p>
-                <p class="tiny">标准答案：{{ optionLabel(ans.correct_option) }}</p>
+              <p class="tiny">第{{ ans.question_no }}题 [{{ questionTypeLabel(ans.question_type) }}]</p>
+              <template v-if="ans.question_type === 'single' || ans.question_type === 'judge'">
+                <p class="tiny">学生作答：{{ optionLabel(ans.selected_option, ans.question_type) }}</p>
+                <p class="tiny">标准答案：{{ optionLabel(ans.correct_option, ans.question_type) }}</p>
+                <p class="tiny">得分：{{ ans.score_awarded }} / {{ ans.full_score }}</p>
+              </template>
+              <template v-else-if="ans.question_type === 'multiple'">
+                <p class="tiny">学生作答：{{ optionSetLabel(ans.selected_options) }}</p>
+                <p class="tiny">标准答案：{{ optionSetLabel(ans.correct_options) }}</p>
+                <p class="tiny">得分：{{ ans.score_awarded }} / {{ ans.full_score }}</p>
+              </template>
+              <template v-else-if="ans.question_type === 'blank'">
+                <p class="tiny">学生答案：{{ ans.subjective_answer || '空' }}</p>
+                <p class="tiny">标准答案：{{ ans.reference_answer || '未填写' }}</p>
                 <p class="tiny">得分：{{ ans.score_awarded }} / {{ ans.full_score }}</p>
               </template>
               <template v-else>
@@ -116,7 +126,7 @@ const initManualScores = () => {
   submissions.value.forEach((item) => {
     manualScores[item.submission_id] = manualScores[item.submission_id] || {}
     ;(item.answers || []).forEach((ans) => {
-      if (ans.question_type === 'subjective') {
+      if (ans.question_type === 'short' || ans.question_type === 'subjective') {
         manualScores[item.submission_id][ans.question_id] = ans.score_awarded
       }
     })
@@ -156,7 +166,7 @@ const saveCurrent = async () => {
   error.value = ''
   try {
     await api.post(`/submissions/${current.value.submission_id}/grade/`, {
-      subjective_scores: manualScores[current.value.submission_id] || {},
+      manual_scores: manualScores[current.value.submission_id] || {},
     })
     await loadOverview()
     dirty.value = false
@@ -191,11 +201,31 @@ const releaseResults = async () => {
   }
 }
 
-const optionLabel = (value) => {
+const optionLabel = (value, questionType = 'single') => {
   if (value === null || value === undefined || value === '') return '未作答'
   const index = Number(value)
+  if (questionType === 'judge') {
+    if (index === 0) return '正确'
+    if (index === 1) return '错误'
+  }
   if (Number.isNaN(index) || index < 0 || index > 3) return String(value)
   return ['A', 'B', 'C', 'D'][index]
+}
+
+const optionSetLabel = (values) => {
+  if (!Array.isArray(values) || values.length === 0) return '未作答'
+  return values.map((v) => optionLabel(v)).join('、')
+}
+
+const questionTypeLabel = (questionType) => {
+  const map = {
+    single: '单选',
+    multiple: '多选',
+    judge: '判断',
+    blank: '填空',
+    short: '简答',
+  }
+  return map[questionType] || questionType
 }
 
 const formatDate = (dateText) => new Date(dateText).toLocaleString()

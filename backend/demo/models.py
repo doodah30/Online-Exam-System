@@ -53,11 +53,15 @@ class Exam(models.Model):
 
 
 class Question(models.Model):
-	"""试卷题目表：支持单选题和主观题。"""
+	"""试卷题目表：支持单选/多选/判断/填空/简答。"""
 
 	QUESTION_TYPE_CHOICES = (
 		('single', 'Single Choice'),
-		('subjective', 'Subjective'),
+		('multiple', 'Multiple Choice'),
+		('judge', 'True or False'),
+		('blank', 'Fill in Blank'),
+		('short', 'Short Answer'),
+		('subjective', 'Subjective (Legacy)'),
 	)
 
 	exam = models.ForeignKey(Exam, on_delete=models.CASCADE, related_name='questions')
@@ -68,6 +72,7 @@ class Question(models.Model):
 	option_c = models.CharField(max_length=255, blank=True)
 	option_d = models.CharField(max_length=255, blank=True)
 	correct_option = models.IntegerField(null=True, blank=True)
+	correct_options = models.CharField(max_length=50, blank=True)
 	reference_answer = models.TextField(blank=True)
 	keyword_answers = models.CharField(max_length=500, blank=True)
 	# bank_item 表示该题是否来源于题库题
@@ -109,6 +114,7 @@ class Answer(models.Model):
 	submission = models.ForeignKey(Submission, on_delete=models.CASCADE, related_name='answers')
 	question = models.ForeignKey(Question, on_delete=models.CASCADE, related_name='answers')
 	selected_option = models.IntegerField(null=True, blank=True)
+	selected_options = models.CharField(max_length=50, blank=True)
 	subjective_answer = models.TextField(blank=True)
 	is_manual_graded = models.BooleanField(default=False)
 	is_correct = models.BooleanField(default=False)
@@ -160,6 +166,7 @@ class QuestionBankItem(models.Model):
 	option_c = models.CharField(max_length=255, blank=True)
 	option_d = models.CharField(max_length=255, blank=True)
 	correct_option = models.IntegerField(null=True, blank=True)
+	correct_options = models.CharField(max_length=50, blank=True)
 	reference_answer = models.TextField(blank=True)
 	keyword_answers = models.CharField(max_length=500, blank=True)
 	score = models.PositiveIntegerField(default=10)

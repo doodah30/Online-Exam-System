@@ -1,23 +1,18 @@
 <template>
-  <section class="grid two-col">
-    <article class="panel hero-landing">
-      <p class="eyebrow">Online Exam System</p>
-      <h2>从出卷到阅卷，一站式教学评估</h2>
+  <section class="stack-lg">
+    <article class="panel hero-landing stack">
+      <p class="eyebrow">Online Exam Platform</p>
+      <h2>智能在线考试平台</h2>
       <p>
-        面向课程教学的在线考试应用：老师快速创建试卷，学生在线答题，系统自动判分并沉淀成绩记录。
+        覆盖课程教学全流程：老师管理课程与题库、发布试卷并阅卷，学生在线答题并查看成绩，管理员统一治理系统。
       </p>
-      <div class="row-wrap">
-        <router-link class="primary" to="/auth">立即开始</router-link>
-        <router-link class="ghost" to="/dashboard">进入控制台</router-link>
+      <div class="grid two-col feature-grid">
+        <div class="card">老师端：课程管理、题库管理、组卷与阅卷</div>
+        <div class="card">学生端：在线考试、自动交卷、成绩查看</div>
+        <div class="card">管理员端：用户管理、日志审计、考试总控</div>
+        <div class="card">邮箱能力：验证码找回密码、账号绑定邮箱</div>
       </div>
-    </article>
-
-    <article class="panel stack">
-      <h3>当前可用功能</h3>
-      <div class="card">老师 / 学生双身份注册登录</div>
-      <div class="card">老师创建单选题试卷并发布</div>
-      <div class="card">学生在线作答并自动评分</div>
-      <div class="card">老师查看考试提交与分数</div>
+      <p class="tiny muted">请点击右上角“登录 / 注册”进入账号页。</p>
     </article>
   </section>
 </template>
@@ -41,8 +36,7 @@
   font-weight: 700;
 }
 
-a.primary,
-a.ghost {
-  text-decoration: none;
+.feature-grid {
+  margin-top: 0.5rem;
 }
 </style>

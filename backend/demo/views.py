@@ -3,7 +3,7 @@ from datetime import timedelta
 from django.contrib.auth import authenticate
 from django.contrib.auth.models import User
 from django.core.mail import send_mail
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Avg, Q
 from django.shortcuts import get_object_or_404
 from django.conf import settings
@@ -96,6 +96,40 @@ def _split_tags(raw_tags):
     return [item.strip() for item in str(raw_tags).split(',') if item.strip()]
 
 
+QUESTION_TYPE_SET = {'single', 'multiple', 'judge', 'blank', 'short', 'subjective'}
+MANUAL_GRADE_TYPES = {'short', 'subjective'}
+
+
+def _normalize_question_type(question_type):
+    raw = str(question_type or 'single').strip().lower()
+    if raw == 'subjective':
+        return 'short'
+    return raw
+
+
+def _parse_index_list(raw):
+    if isinstance(raw, list):
+        values = raw
+    elif isinstance(raw, str):
+        values = [x.strip() for x in raw.split(',') if x.strip()]
+    else:
+        values = []
+
+    parsed = []
+    for value in values:
+        try:
+            num = int(value)
+        except (TypeError, ValueError):
+            continue
+        if num not in parsed:
+            parsed.append(num)
+    return parsed
+
+
+def _join_index_list(values):
+    return ','.join(str(v) for v in values)
+
+
 def _is_valid_email(email):
     email = str(email or '').strip()
     return '@' in email and '.' in email.split('@')[-1]
@@ -173,50 +207,104 @@ def _grade_subjective(answer_text, keywords, full_score):
     return 0, False, f'关键词命中 {hit}/{len(keywords)}'
 
 
-def _validate_single_question_payload(item):
-    """校验单选题输入结构并返回标准化字段。"""
-    option_list = item.get('options', [])
+def _validate_choice_options(option_list, question_type):
     if not isinstance(option_list, list) or len(option_list) != 4:
-        return None, 'single 题型必须提供 4 个选项'
+        return None, f'{question_type} 题型必须提供 4 个选项'
+    clean_options = [str(opt).strip() for opt in option_list]
+    if not all(clean_options):
+        return None, f'{question_type} 题型选项不能为空'
+    return clean_options, None
 
-    for opt in option_list:
-        if not str(opt).strip():
-            return None, 'single 题型选项不能为空'
+
+def _validate_single_question_payload(item):
+    options, error = _validate_choice_options(item.get('options', []), 'single')
+    if error:
+        return None, error
 
     try:
         correct_option = int(item.get('correct_option', -1))
     except (TypeError, ValueError):
         return None, 'correct_option 必须是数字'
-
     if correct_option < 0 or correct_option > 3:
         return None, 'correct_option 必须在 0~3'
 
-    payload = {
-        'option_a': str(option_list[0]).strip(),
-        'option_b': str(option_list[1]).strip(),
-        'option_c': str(option_list[2]).strip(),
-        'option_d': str(option_list[3]).strip(),
+    return {
+        'option_a': options[0],
+        'option_b': options[1],
+        'option_c': options[2],
+        'option_d': options[3],
         'correct_option': correct_option,
+        'correct_options': '',
         'reference_answer': '',
         'keyword_answers': '',
-    }
-    return payload, None
+    }, None
 
 
-def _validate_subjective_question_payload(item):
-    """校验主观题输入结构并返回标准化字段。"""
+def _validate_multiple_question_payload(item):
+    options, error = _validate_choice_options(item.get('options', []), 'multiple')
+    if error:
+        return None, error
+
+    correct_options = _parse_index_list(item.get('correct_options', []))
+    valid = [idx for idx in correct_options if 0 <= idx <= 3]
+    if not valid:
+        return None, 'multiple 题型至少需要一个正确选项'
+
+    return {
+        'option_a': options[0],
+        'option_b': options[1],
+        'option_c': options[2],
+        'option_d': options[3],
+        'correct_option': None,
+        'correct_options': _join_index_list(valid),
+        'reference_answer': '',
+        'keyword_answers': '',
+    }, None
+
+
+def _validate_judge_question_payload(item):
+    raw = item.get('correct_option', item.get('correct_judge', 0))
+    if isinstance(raw, bool):
+        correct_option = 0 if raw else 1
+    else:
+        text = str(raw).strip().lower()
+        if text in ('true', '1', 'yes', '正确', '对'):
+            correct_option = 0
+        elif text in ('false', '0', 'no', '错误', '错'):
+            correct_option = 1
+        else:
+            try:
+                correct_option = int(raw)
+            except (TypeError, ValueError):
+                return None, 'judge 题型 correct_option 必须是 0/1'
+    if correct_option not in (0, 1):
+        return None, 'judge 题型 correct_option 必须是 0/1'
+
+    return {
+        'option_a': '正确',
+        'option_b': '错误',
+        'option_c': '',
+        'option_d': '',
+        'correct_option': correct_option,
+        'correct_options': '',
+        'reference_answer': '',
+        'keyword_answers': '',
+    }, None
+
+
+def _validate_text_question_payload(item):
     reference_answer = str(item.get('reference_answer', '')).strip()
     keyword_answers = str(item.get('keyword_answers', '')).strip()
-    payload = {
+    return {
         'option_a': '',
         'option_b': '',
         'option_c': '',
         'option_d': '',
         'correct_option': None,
+        'correct_options': '',
         'reference_answer': reference_answer,
         'keyword_answers': keyword_answers,
-    }
-    return payload, None
+    }, None
 
 
 def _normalize_question_payload(item):
@@ -225,7 +313,7 @@ def _normalize_question_payload(item):
     该函数是题库创建、试卷创建的公共入口，保证数据格式一致。
     """
     # 将前端上传的题目统一标准化，便于同时写入题库/试卷。
-    question_type = str(item.get('question_type', 'single')).strip()
+    question_type = _normalize_question_type(item.get('question_type', 'single'))
     text = str(item.get('text', '')).strip()
 
     try:
@@ -237,14 +325,18 @@ def _normalize_question_payload(item):
         return None, 'score 必须大于 0'
     if not text:
         return None, '题干不能为空'
-    if question_type not in ('single', 'subjective'):
-        return None, 'question_type 必须是 single 或 subjective'
+    if question_type not in QUESTION_TYPE_SET:
+        return None, 'question_type 必须是 single/multiple/judge/blank/short'
 
-    extra_payload, error = (
-        _validate_single_question_payload(item)
-        if question_type == 'single'
-        else _validate_subjective_question_payload(item)
-    )
+    if question_type == 'single':
+        extra_payload, error = _validate_single_question_payload(item)
+    elif question_type == 'multiple':
+        extra_payload, error = _validate_multiple_question_payload(item)
+    elif question_type == 'judge':
+        extra_payload, error = _validate_judge_question_payload(item)
+    else:
+        extra_payload, error = _validate_text_question_payload(item)
+
     if error:
         return None, error
 
@@ -283,10 +375,12 @@ def _question_to_dict(question, include_answer=False):
         'score': question.score,
     }
 
-    if question.question_type == 'single':
+    if question.question_type in ('single', 'multiple', 'judge'):
         payload['options'] = [question.option_a, question.option_b, question.option_c, question.option_d]
-        if include_answer:
+        if question.question_type in ('single', 'judge') and include_answer:
             payload['correct_option'] = question.correct_option
+        if question.question_type == 'multiple' and include_answer:
+            payload['correct_options'] = _parse_index_list(question.correct_options)
     else:
         payload['reference_answer'] = question.reference_answer if include_answer else ''
         payload['keyword_answers'] = question.keyword_answers if include_answer else ''
@@ -300,7 +394,7 @@ def _exam_to_dict(exam, include_questions=False, include_answer=False, attempted
     include_questions=True 时返回题目列表。
     include_answer=True 时返回标准答案字段（仅老师端可用）。
     """
-    has_subjective = exam.questions.filter(question_type='subjective').exists()
+    has_subjective = exam.questions.filter(question_type__in=MANUAL_GRADE_TYPES).exists()
     payload = {
         'id': exam.id,
         'title': exam.title,
@@ -345,6 +439,7 @@ def _bank_item_to_dict(item):
         'text': item.text,
         'options': [item.option_a, item.option_b, item.option_c, item.option_d],
         'correct_option': item.correct_option,
+        'correct_options': _parse_index_list(item.correct_options),
         'reference_answer': item.reference_answer,
         'keyword_answers': item.keyword_answers,
         'score': item.score,
@@ -401,7 +496,7 @@ def auth_register(request):
 def auth_login(request):
     """登录接口，返回 token 和用户角色。"""
     # 登录成功后返回 token + 用户角色。
-    # 前端会把 token 存在浏览器 localStorage，并在每次请求头带上它。
+    # 前端会把 token 保存在 sessionStorage，并在每次请求头带上它。
     username = request.data.get('username', '').strip()
     password = request.data.get('password', '').strip()
 
@@ -412,7 +507,22 @@ def auth_login(request):
     if not hasattr(user, 'profile'):
         return Response({'error': 'profile missing, please contact admin'}, status=400)
 
-    token, _ = Token.objects.get_or_create(user=user)
+    # 单设备登录策略：同一账号已有有效 token 时，拒绝新登录。
+    # 为避免异常关机导致永久占用，这里允许清理超过 24 小时的陈旧 token。
+    try:
+        with transaction.atomic():
+            existing_token = Token.objects.select_for_update().filter(user=user).first()
+            if existing_token and existing_token.created < timezone.now() - timedelta(hours=24):
+                existing_token.delete()
+                existing_token = None
+
+            if existing_token is not None:
+                return Response({'error': '账号在其他设备登录，请重新登录'}, status=409)
+
+            token = Token.objects.create(user=user)
+    except IntegrityError:
+        # 极端并发下若出现唯一键竞争，按“已有设备在线”处理。
+        return Response({'error': '账号在其他设备登录，请重新登录'}, status=409)
     _log_operation(
         request,
         action='user_login',
@@ -433,6 +543,30 @@ def auth_login(request):
             },
         }
     )
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def auth_logout(request):
+    """退出登录，主动失效当前 token。"""
+    # 只失效当前请求携带的 token，避免误删非当前会话。
+    if getattr(request, 'auth', None):
+        request.auth.delete()
+    else:
+        token = Token.objects.filter(user=request.user).first()
+        if token:
+            token.delete()
+
+    _log_operation(
+        request,
+        action='user_logout',
+        actor=request.user,
+        target_type='user',
+        target_id=request.user.id,
+        target_label=request.user.username,
+        detail='logout success',
+    )
+    return Response({'ok': True})
 
 
 @api_view(['GET'])
@@ -860,7 +994,7 @@ def question_bank(request):
         queryset = queryset.filter(subject_tag__iexact=subject_tag)
     if tag:
         queryset = queryset.filter(tags__icontains=tag)
-    if question_type in ('single', 'subjective'):
+    if question_type in QUESTION_TYPE_SET:
         queryset = queryset.filter(question_type=question_type)
     if difficulty:
         try:
@@ -973,16 +1107,17 @@ def exams(request):
                     if not bank_item:
                         transaction.set_rollback(True)
                         return Response({'error': f'bank item {bank_item_id} not found'}, status=404)
-                    if bank_item.question_type == 'subjective':
+                    if bank_item.question_type in MANUAL_GRADE_TYPES:
                         has_subjective_question = True
                     normalized = {
-                        'question_type': bank_item.question_type,
+                        'question_type': _normalize_question_type(bank_item.question_type),
                         'text': bank_item.text,
                         'option_a': bank_item.option_a,
                         'option_b': bank_item.option_b,
                         'option_c': bank_item.option_c,
                         'option_d': bank_item.option_d,
                         'correct_option': bank_item.correct_option,
+                        'correct_options': bank_item.correct_options,
                         'reference_answer': bank_item.reference_answer,
                         'keyword_answers': bank_item.keyword_answers,
                         'score': bank_item.score,
@@ -996,7 +1131,7 @@ def exams(request):
                         transaction.set_rollback(True)
                         return Response({'error': error}, status=400)
 
-                    if normalized['question_type'] == 'subjective':
+                    if normalized['question_type'] in MANUAL_GRADE_TYPES:
                         has_subjective_question = True
 
                     if save_to_bank:
@@ -1008,6 +1143,7 @@ def exams(request):
                             'option_c': normalized['option_c'],
                             'option_d': normalized['option_d'],
                             'correct_option': normalized['correct_option'],
+                            'correct_options': normalized['correct_options'],
                             'reference_answer': normalized['reference_answer'],
                             'keyword_answers': normalized['keyword_answers'],
                             'score': normalized['score'],
@@ -1025,6 +1161,7 @@ def exams(request):
                     'option_c': normalized['option_c'],
                     'option_d': normalized['option_d'],
                     'correct_option': normalized['correct_option'],
+                    'correct_options': normalized['correct_options'],
                     'reference_answer': normalized['reference_answer'],
                     'keyword_answers': normalized['keyword_answers'],
                     'score': normalized['score'],
@@ -1111,7 +1248,7 @@ def submit_exam(request, exam_id):
     # 提交试卷后会写入：
     # 1) Submission（一次交卷记录）
     # 2) Answer（每一题的作答与得分）
-    # 客观题按正确选项判分，主观题按关键词自动评分。
+    # 客观题自动判分，简答题走人工阅卷。
     if _get_role(request.user) != 'student':
         return Response({'error': 'only student can submit'}, status=403)
 
@@ -1149,22 +1286,53 @@ def submit_exam(request, exam_id):
             score_awarded = 0
             is_correct = False
             selected_option = None
+            selected_options = ''
             subjective_answer = ''
             auto_feedback = ''
 
-            if question.question_type == 'single':
+            q_type = _normalize_question_type(question.question_type)
+
+            if q_type in ('single', 'judge'):
                 if selected is not None:
                     try:
                         selected_option = int(selected)
                     except (TypeError, ValueError):
                         return Response({'error': f'invalid selected option for question {question.id}'}, status=400)
 
-                    if selected_option < 0 or selected_option > 3:
+                    if q_type == 'single' and (selected_option < 0 or selected_option > 3):
                         return Response({'error': f'selected option must be 0~3 for question {question.id}'}, status=400)
+                    if q_type == 'judge' and selected_option not in (0, 1):
+                        return Response({'error': f'judge answer must be 0/1 for question {question.id}'}, status=400)
 
                     is_correct = selected_option == question.correct_option
                     score_awarded = question.score if is_correct else 0
                     auto_feedback = '客观题自动判分'
+
+            elif q_type == 'multiple':
+                chosen = _parse_index_list(selected)
+                chosen = [idx for idx in chosen if 0 <= idx <= 3]
+                selected_options = _join_index_list(chosen)
+
+                expected = _parse_index_list(question.correct_options)
+                is_correct = sorted(chosen) == sorted(expected)
+                score_awarded = question.score if is_correct else 0
+                auto_feedback = '多选题自动判分'
+
+            elif q_type == 'blank':
+                subjective_answer = str(selected or '').strip()
+                if question.keyword_answers:
+                    score_awarded, is_correct, auto_feedback = _grade_subjective(
+                        subjective_answer,
+                        _parse_keywords(question.keyword_answers),
+                        question.score,
+                    )
+                else:
+                    std_text = str(question.reference_answer or '').strip().lower()
+                    ans_text = subjective_answer.lower()
+                    is_correct = bool(std_text) and ans_text == std_text
+                    score_awarded = question.score if is_correct else 0
+                    auto_feedback = '填空题自动判分'
+
             else:
                 has_subjective = True
                 subjective_answer = str(selected or '').strip()
@@ -1176,8 +1344,9 @@ def submit_exam(request, exam_id):
                 submission=submission,
                 question=question,
                 selected_option=selected_option,
+                selected_options=selected_options,
                 subjective_answer=subjective_answer,
-                is_manual_graded=(question.question_type == 'single'),
+                is_manual_graded=(q_type not in MANUAL_GRADE_TYPES),
                 is_correct=is_correct,
                 score_awarded=score_awarded,
                 auto_feedback=auto_feedback,
@@ -1187,10 +1356,12 @@ def submit_exam(request, exam_id):
             details.append(
                 {
                     'question_id': question.id,
-                    'question_type': question.question_type,
+                    'question_type': q_type,
                     'selected_option': selected_option,
+                    'selected_options': _parse_index_list(selected_options),
                     'subjective_answer': subjective_answer,
                     'correct_option': question.correct_option,
+                    'correct_options': _parse_index_list(question.correct_options),
                     'score_awarded': score_awarded,
                     'full_score': question.score,
                     'auto_feedback': auto_feedback,
@@ -1299,9 +1470,11 @@ def grade_submission(request, submission_id):
     if submission.exam.created_by_id != request.user.id:
         return Response({'error': 'forbidden'}, status=403)
 
-    subjective_scores = request.data.get('subjective_scores', {})
-    if not isinstance(subjective_scores, dict):
-        return Response({'error': 'subjective_scores must be an object'}, status=400)
+    manual_scores = request.data.get('manual_scores')
+    if manual_scores is None:
+        manual_scores = request.data.get('subjective_scores', {})
+    if not isinstance(manual_scores, dict):
+        return Response({'error': 'manual_scores must be an object'}, status=400)
 
     with transaction.atomic():
         total_score = 0
@@ -1310,10 +1483,11 @@ def grade_submission(request, submission_id):
             question = ans.question
             max_score += question.score
 
-            if question.question_type == 'subjective':
-                raw = subjective_scores.get(str(question.id))
+            q_type = _normalize_question_type(question.question_type)
+            if q_type in MANUAL_GRADE_TYPES:
+                raw = manual_scores.get(str(question.id))
                 if raw is None:
-                    raw = subjective_scores.get(question.id)
+                    raw = manual_scores.get(question.id)
                 if raw is None:
                     score = 0
                 else:
@@ -1391,13 +1565,18 @@ def exam_submissions(request, exam_id):
             {
                 'question_no': question_order_map.get(ans.question_id, 0),
                 'question_id': ans.question_id,
-                'question_type': ans.question.question_type,
+                'question_type': _normalize_question_type(ans.question.question_type),
+                'question_text': ans.question.text,
+                'options': [ans.question.option_a, ans.question.option_b, ans.question.option_c, ans.question.option_d],
                 'selected_option': ans.selected_option,
+                'selected_options': _parse_index_list(ans.selected_options),
                 'correct_option': ans.question.correct_option,
+                'correct_options': _parse_index_list(ans.question.correct_options),
                 'subjective_answer': ans.subjective_answer,
                 'reference_answer': ans.question.reference_answer,
                 'full_score': ans.question.score,
                 'score_awarded': ans.score_awarded,
+                'is_correct': ans.is_correct,
                 'auto_feedback': ans.auto_feedback,
             }
             for ans in item.answers.select_related('question').all().order_by('id')
@@ -1761,6 +1940,66 @@ def admin_system_config(request):
             'max_exam_concurrency': config.max_exam_concurrency,
             'updated_by': config.updated_by.username if config.updated_by else '',
             'updated_at': config.updated_at,
+        }
+    )
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def submission_review(request, submission_id):
+    """学生查看自己的答卷详情；成绩发布后显示标准答案。"""
+    submission = get_object_or_404(Submission.objects.select_related('exam', 'student'), id=submission_id)
+    role = _get_role(request.user)
+
+    if role == 'student' and submission.student_id != request.user.id:
+        return Response({'error': 'forbidden'}, status=403)
+    if role == 'teacher' and submission.exam.created_by_id != request.user.id:
+        return Response({'error': 'forbidden'}, status=403)
+    if role not in ('student', 'teacher', 'admin'):
+        return Response({'error': 'forbidden'}, status=403)
+
+    can_view_correct = role in ('teacher', 'admin') or submission.is_result_published
+    question_order_map = {q.id: idx + 1 for idx, q in enumerate(submission.exam.questions.all().order_by('id'))}
+
+    answers = []
+    for ans in submission.answers.select_related('question').all().order_by('id'):
+        q = ans.question
+        q_type = _normalize_question_type(q.question_type)
+        answers.append(
+            {
+                'question_no': question_order_map.get(q.id, 0),
+                'question_id': q.id,
+                'question_type': q_type,
+                'question_text': q.text,
+                'options': [q.option_a, q.option_b, q.option_c, q.option_d],
+                'selected_option': ans.selected_option,
+                'selected_options': _parse_index_list(ans.selected_options),
+                'subjective_answer': ans.subjective_answer,
+                'correct_option': q.correct_option if can_view_correct else None,
+                'correct_options': _parse_index_list(q.correct_options) if can_view_correct else [],
+                'reference_answer': q.reference_answer if can_view_correct else '',
+                'is_correct': ans.is_correct if can_view_correct else None,
+                'score_awarded': ans.score_awarded,
+                'full_score': q.score,
+                'auto_feedback': ans.auto_feedback,
+            }
+        )
+
+    return Response(
+        {
+            'submission_id': submission.id,
+            'exam': {
+                'id': submission.exam.id,
+                'title': submission.exam.title,
+                'description': submission.exam.description,
+            },
+            'status': submission.status,
+            'is_result_published': submission.is_result_published,
+            'can_view_correct': can_view_correct,
+            'total_score': submission.total_score if submission.is_result_published or role != 'student' else None,
+            'max_score': submission.max_score if submission.is_result_published or role != 'student' else None,
+            'submitted_at': submission.submitted_at,
+            'answers': answers,
         }
     )
 

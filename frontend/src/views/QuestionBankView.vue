@@ -38,7 +38,10 @@
             题型
             <select v-model="form.question_type">
               <option value="single">单选题</option>
-              <option value="subjective">主观题</option>
+              <option value="multiple">多选题</option>
+              <option value="judge">判断题</option>
+              <option value="blank">填空题</option>
+              <option value="short">简答题</option>
             </select>
           </label>
           <label>
@@ -51,6 +54,54 @@
           题干
           <textarea v-model.trim="form.text" rows="2" required></textarea>
         </label>
+
+        <template v-if="form.question_type === 'single' || form.question_type === 'multiple'">
+          <div class="grid two-col">
+            <label v-for="(opt, idx) in form.options" :key="idx">
+              选项 {{ String.fromCharCode(65 + idx) }}
+              <input v-model.trim="form.options[idx]" required />
+            </label>
+          </div>
+
+          <label v-if="form.question_type === 'single'">
+            正确选项
+            <select v-model.number="form.correct_option">
+              <option :value="0">A</option>
+              <option :value="1">B</option>
+              <option :value="2">C</option>
+              <option :value="3">D</option>
+            </select>
+          </label>
+
+          <div v-else class="stack-sm">
+            <p class="tiny">正确选项（可多选）</p>
+            <label v-for="opt in [0, 1, 2, 3]" :key="`co-${opt}`" class="tiny checkbox-line">
+              <input type="checkbox" :value="opt" v-model="form.correct_options" />
+              {{ String.fromCharCode(65 + opt) }}
+            </label>
+          </div>
+        </template>
+
+        <template v-else-if="form.question_type === 'judge'">
+          <label>
+            正确答案
+            <select v-model.number="form.correct_option">
+              <option :value="0">正确</option>
+              <option :value="1">错误</option>
+            </select>
+          </label>
+        </template>
+
+        <template v-else>
+          <label>
+            参考答案
+            <textarea v-model.trim="form.reference_answer" rows="2"></textarea>
+          </label>
+          <label>
+            关键词（逗号分隔）
+            <input v-model.trim="form.keyword_answers" placeholder="例如：封装,继承,多态" />
+          </label>
+        </template>
 
         <div class="stack-sm">
           <p class="tiny">标签（可输入新标签，也可点击热门标签）</p>
@@ -76,35 +127,6 @@
             </button>
           </div>
         </div>
-
-        <template v-if="form.question_type === 'single'">
-          <div class="grid two-col">
-            <label v-for="(opt, idx) in form.options" :key="idx">
-              选项 {{ String.fromCharCode(65 + idx) }}
-              <input v-model.trim="form.options[idx]" required />
-            </label>
-          </div>
-          <label>
-            正确选项
-            <select v-model.number="form.correct_option">
-              <option :value="0">A</option>
-              <option :value="1">B</option>
-              <option :value="2">C</option>
-              <option :value="3">D</option>
-            </select>
-          </label>
-        </template>
-
-        <template v-else>
-          <label>
-            参考答案
-            <textarea v-model.trim="form.reference_answer" rows="2"></textarea>
-          </label>
-          <label>
-            关键词（逗号分隔）
-            <input v-model.trim="form.keyword_answers" placeholder="例如：封装,继承,多态" />
-          </label>
-        </template>
 
         <div class="row-wrap">
           <button class="primary">{{ editId ? '保存修改' : '加入题库' }}</button>
@@ -210,6 +232,7 @@ const makeForm = () => ({
   score: 10,
   options: ['', '', '', ''],
   correct_option: 0,
+  correct_options: [0],
   reference_answer: '',
   keyword_answers: '',
 })
@@ -245,8 +268,9 @@ const removeTag = (tag) => {
 }
 
 const toPayload = () => {
+  const qType = form.question_type
   const base = {
-    question_type: form.question_type,
+    question_type: qType,
     subject_tag: form.subject_tag || 'common',
     tags: selectedTags.value.join(','),
     difficulty: form.difficulty,
@@ -254,10 +278,25 @@ const toPayload = () => {
     score: form.score,
   }
 
-  if (form.question_type === 'single') {
+  if (qType === 'single') {
     return {
       ...base,
       options: form.options,
+      correct_option: form.correct_option,
+    }
+  }
+
+  if (qType === 'multiple') {
+    return {
+      ...base,
+      options: form.options,
+      correct_options: form.correct_options,
+    }
+  }
+
+  if (qType === 'judge') {
+    return {
+      ...base,
       correct_option: form.correct_option,
     }
   }
@@ -344,6 +383,7 @@ const startEdit = (item) => {
   form.score = item.score
   form.options = item.options || ['', '', '', '']
   form.correct_option = item.correct_option ?? 0
+  form.correct_options = Array.isArray(item.correct_options) ? item.correct_options : []
   form.reference_answer = item.reference_answer || ''
   form.keyword_answers = item.keyword_answers || ''
   selectedTags.value = item.tags ? item.tags.split(',').map((t) => t.trim()).filter(Boolean) : []
@@ -405,5 +445,15 @@ onMounted(async () => {
   color: var(--danger);
   margin-left: 0.3rem;
   padding: 0;
+}
+
+.checkbox-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.checkbox-line input {
+  width: auto;
 }
 </style>

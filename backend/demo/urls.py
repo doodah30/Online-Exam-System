@@ -9,6 +9,7 @@ from .views import (
     admin_user_detail,
     admin_users,
     auth_login,
+    auth_logout,
     auth_me,
     auth_bind_email_with_code,
     auth_reset_password_with_code,
@@ -31,6 +32,7 @@ from .views import (
     release_exam_results,
     students,
     submit_exam,
+    submission_review,
 )
 
 urlpatterns = [
@@ -40,6 +42,7 @@ urlpatterns = [
     # 认证
     path('auth/register/', auth_register),
     path('auth/login/', auth_login),
+    path('auth/logout/', auth_logout),
     path('auth/me/', auth_me),
     path('auth/password-reset/send-code/', auth_send_password_reset_code),
     path('auth/password-reset/confirm/', auth_reset_password_with_code),
@@ -70,6 +73,7 @@ urlpatterns = [
 
     # 学生查看自己的提交
     path('submissions/mine/', my_submissions),
+    path('submissions/<int:submission_id>/review/', submission_review),
 
     # 管理员能力
     path('admin/users/', admin_users),

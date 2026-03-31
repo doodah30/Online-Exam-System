@@ -1,19 +1,11 @@
 <template>
-  <section class="grid two-col auth-page">
-    <article class="panel hero-panel">
-      <h2>智能在线考试平台</h2>
-      <p>
-        一套可直接演示的在线考试系统：支持老师出题组卷、学生在线作答、自动评分与阅卷查看。
-      </p>
-      <ul>
-        <li>支持老师 / 学生双角色注册登录</li>
-        <li>支持客观题自动阅卷并实时返回成绩</li>
-        <li>支持老师查看每场考试提交记录</li>
-      </ul>
-      <p class="tiny muted">管理员账号不开放公开注册，由系统初始化或由现有管理员创建。</p>
-    </article>
-
+  <section class="auth-page">
     <article class="panel form-panel">
+      <div class="row-between">
+        <h2>登录 / 注册</h2>
+        <button class="back-arrow" type="button" @click="router.push('/')">← 返回</button>
+      </div>
+      <p class="muted tiny">管理员账号不开放公开注册，由系统初始化或由现有管理员创建。</p>
       <div class="tabs">
         <button :class="{ active: mode === 'login' }" @click="mode = 'login'">登录</button>
         <button :class="{ active: mode === 'register' }" @click="mode = 'register'">注册</button>
@@ -201,34 +193,23 @@ const resetPasswordByCode = async () => {
 <style scoped>
 .auth-page {
   margin-top: 1.2rem;
-}
-
-.hero-panel h2 {
-  font-size: clamp(1.5rem, 3vw, 2rem);
-  margin-bottom: 0.8rem;
-}
-
-.hero-panel p {
-  color: var(--muted);
-  margin-bottom: 1rem;
-}
-
-.hero-panel ul {
-  list-style: none;
-  display: grid;
-  gap: 0.65rem;
-}
-
-.hero-panel li {
-  background: var(--soft);
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 0.7rem 0.9rem;
+  width: min(640px, 100%);
+  margin-left: auto;
+  margin-right: auto;
 }
 
 .form-panel {
   display: grid;
   gap: 1rem;
+}
+
+.back-arrow {
+  border: 1px solid var(--line);
+  background: #fff;
+  border-radius: 999px;
+  padding: 0.35rem 0.8rem;
+  color: var(--brand-deep);
+  font-weight: 700;
 }
 
 .tabs {

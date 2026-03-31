@@ -27,6 +27,15 @@
         </div>
 
         <button class="primary" :disabled="loading">{{ loading ? '处理中...' : '确认绑定' }}</button>
+        <button
+          v-if="auth.user.email"
+          class="ghost"
+          type="button"
+          :disabled="loading"
+          @click="cancelRebind"
+        >
+          取消换绑
+        </button>
       </form>
 
       <p v-if="message" class="ok">{{ message }}</p>
@@ -54,7 +63,7 @@ const form = reactive({
 
 const syncLocalUserEmail = (email) => {
   auth.user.email = email
-  localStorage.setItem('exam_user', JSON.stringify(auth.user))
+  sessionStorage.setItem('exam_user', JSON.stringify(auth.user))
 }
 
 const sendBindCode = async () => {
@@ -89,6 +98,14 @@ const bindEmailByCode = async () => {
   } finally {
     loading.value = false
   }
+}
+
+const cancelRebind = () => {
+  form.email = auth.user.email || ''
+  form.code = ''
+  error.value = ''
+  message.value = ''
+  showBindingForm.value = false
 }
 
 onMounted(() => {

@@ -10,8 +10,8 @@
       </div>
 
       <nav class="top-actions">
-        <button v-if="!auth.isAuthenticated" class="ghost" @click="goAuth">登录 / 注册</button>
-        <div v-else class="user-box">
+        <button v-if="showAuthEntry" class="ghost" @click="goAuth">登录 / 注册</button>
+        <div v-else-if="auth.isAuthenticated" class="user-box">
           <span>{{ auth.user.username }} · {{ roleText }}</span>
           <button class="ghost" @click="goBindEmail">绑定邮箱</button>
           <button class="danger" @click="logout">退出登录</button>
@@ -26,18 +26,23 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, onBeforeUnmount, onMounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { api } from './api'
 import { authState, clearAuth } from './stores/auth'
 
 const router = useRouter()
+const route = useRoute()
 const auth = authState
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000/api'
 
 const roleText = computed(() => {
   if (auth.user.role === 'teacher') return '老师'
   if (auth.user.role === 'admin') return '管理员'
   return '学生'
 })
+
+const showAuthEntry = computed(() => !auth.isAuthenticated && route.path !== '/auth')
 
 const goAuth = () => {
   router.push('/auth')
@@ -63,10 +68,49 @@ const goBindEmail = () => {
   router.push('/account/email')
 }
 
-const logout = () => {
-  clearAuth()
-  router.push('/auth')
+const logout = async () => {
+  const token = auth.token || sessionStorage.getItem('exam_token')
+  try {
+    if (token) {
+      await api.post(
+        '/auth/logout/',
+        {},
+        {
+          headers: {
+            Authorization: `Token ${token}`,
+          },
+        },
+      )
+    }
+  } catch (_) {
+    // 即使后端暂时不可达，也允许前端先退出本地会话。
+  } finally {
+    clearAuth()
+    router.push('/auth')
+  }
 }
+
+const logoutOnPageHide = () => {
+  const token = sessionStorage.getItem('exam_token')
+  if (!token) return
+  fetch(`${API_BASE}/auth/logout/`, {
+    method: 'POST',
+    keepalive: true,
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Token ${token}`,
+    },
+    body: '{}',
+  }).catch(() => null)
+}
+
+onMounted(() => {
+  window.addEventListener('pagehide', logoutOnPageHide)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('pagehide', logoutOnPageHide)
+})
 </script>
 
 <style scoped>

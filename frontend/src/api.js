@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { authState, clearAuth } from './stores/auth'
 
 // 前端所有接口都通过这个实例访问后端。
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000/api'
@@ -10,9 +11,25 @@ export const api = axios.create({
 api.interceptors.request.use((config) => {
   // 若本地保存了 token，则自动放到 Authorization 请求头。
   // 后端会用 TokenAuthentication 校验该 token。
-  const token = localStorage.getItem('exam_token')
+  const token = sessionStorage.getItem('exam_token')
   if (token) {
     config.headers.Authorization = `Token ${token}`
   }
   return config
 })
+
+let handlingAuthExpired = false
+
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    const status = error?.response?.status
+    if (status === 401 && authState.isAuthenticated && !handlingAuthExpired) {
+      handlingAuthExpired = true
+      window.alert('账号在其他设备登录，请重新登录')
+      clearAuth()
+      window.location.href = '/auth'
+    }
+    return Promise.reject(error)
+  },
+)

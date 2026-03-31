@@ -101,7 +101,10 @@
                 题型
                 <select v-model="q.question_type">
                   <option value="single">单选题</option>
-                  <option value="subjective">主观题</option>
+                  <option value="multiple">多选题</option>
+                  <option value="judge">判断题</option>
+                  <option value="blank">填空题</option>
+                  <option value="short">简答题</option>
                 </select>
               </label>
               <label>
@@ -115,7 +118,7 @@
               <textarea v-model.trim="q.text" rows="2" required></textarea>
             </label>
 
-            <template v-if="q.question_type === 'single'">
+            <template v-if="q.question_type === 'single' || q.question_type === 'multiple'">
               <div class="grid two-col">
                 <label v-for="(opt, i) in q.options" :key="i">
                   选项 {{ String.fromCharCode(65 + i) }}
@@ -123,13 +126,31 @@
                 </label>
               </div>
 
-              <label>
+              <label v-if="q.question_type === 'single'">
                 正确选项
                 <select v-model.number="q.correct_option">
                   <option :value="0">A</option>
                   <option :value="1">B</option>
                   <option :value="2">C</option>
                   <option :value="3">D</option>
+                </select>
+              </label>
+
+              <div v-else class="stack-sm">
+                <p class="tiny">正确选项（可多选）</p>
+                <label v-for="opt in [0, 1, 2, 3]" :key="`${q.localId}-co-${opt}`" class="tiny checkbox-line">
+                  <input type="checkbox" :value="opt" v-model="q.correct_options" />
+                  {{ String.fromCharCode(65 + opt) }}
+                </label>
+              </div>
+            </template>
+
+            <template v-else-if="q.question_type === 'judge'">
+              <label>
+                正确答案
+                <select v-model.number="q.correct_option">
+                  <option :value="0">正确</option>
+                  <option :value="1">错误</option>
                 </select>
               </label>
             </template>
@@ -156,14 +177,14 @@
               </label>
             </div>
 
-            <label>
-              标签（逗号分隔）
-              <input v-model.trim="q.tags" />
-            </label>
-
             <label class="save-row">
               <span>保存到题库</span>
               <input type="checkbox" v-model="q.save_to_bank" />
+            </label>
+
+            <label>
+              标签（逗号分隔）
+              <input v-model.trim="q.tags" />
             </label>
           </div>
         </div>
@@ -233,6 +254,7 @@ const makeQuestion = () => ({
   text: '',
   options: ['', '', '', ''],
   correct_option: 0,
+  correct_options: [0],
   reference_answer: '',
   keyword_answers: '',
   subject_tag: 'common',
@@ -388,6 +410,7 @@ const appendPickedQuestions = async () => {
     q.score = item.score
     q.options = item.options || ['', '', '', '']
     q.correct_option = item.correct_option ?? 0
+    q.correct_options = Array.isArray(item.correct_options) ? item.correct_options : []
     q.reference_answer = item.reference_answer || ''
     q.keyword_answers = item.keyword_answers || ''
     q.subject_tag = item.subject_tag || 'common'
@@ -415,6 +438,14 @@ const normalizeQuestion = (q) => {
 
   if (q.question_type === 'single') {
     return { ...base, options: q.options, correct_option: q.correct_option }
+  }
+
+  if (q.question_type === 'multiple') {
+    return { ...base, options: q.options, correct_options: q.correct_options || [] }
+  }
+
+  if (q.question_type === 'judge') {
+    return { ...base, correct_option: q.correct_option }
   }
 
   return {
