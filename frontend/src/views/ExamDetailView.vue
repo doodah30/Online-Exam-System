@@ -295,7 +295,7 @@ onBeforeUnmount(clearCountdown)
   padding: 0.6rem 0.75rem;
 }
 
-.choice-row:hover:not(:disabled) {
+.choice-row:not(.selected):hover:not(:disabled) {
   border-color: #3f8f68;
   background: #eef9f3;
 }
@@ -306,6 +306,12 @@ onBeforeUnmount(clearCountdown)
   color: #fff;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.25);
   font-weight: 700;
+}
+
+.choice-row.selected:hover:not(:disabled) {
+  border-color: #0f5a37;
+  background: #146b43;
+  color: #fff;
 }
 
 .choice-row:disabled {
